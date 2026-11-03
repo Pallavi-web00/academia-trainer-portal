@@ -38,9 +38,9 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, size = 'md' })
     case 'Change Requested':
       return (
         <span
-          className={`inline-flex items-center gap-1.5 font-medium rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 ${sizeClasses}`}
+          className={`inline-flex items-center gap-1.5 font-medium rounded-md bg-rose-50 text-rose-700 border border-rose-200 ${sizeClasses}`}
         >
-          <ArrowUpRight className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+          <ArrowUpRight className="w-3.5 h-3.5 text-rose-600 shrink-0" />
           <span className="whitespace-nowrap">{status}</span>
         </span>
       );
@@ -81,9 +81,9 @@ export const StatusBadge: React.FC<StatusBadgeProps> = ({ status, size = 'md' })
     case 'Ongoing':
       return (
         <span
-          className={`inline-flex items-center gap-1.5 font-medium rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 ${sizeClasses}`}
+          className={`inline-flex items-center gap-1.5 font-medium rounded-md bg-sky-50 text-sky-700 border border-sky-200 ${sizeClasses}`}
         >
-          <Clock className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
+          <Clock className="w-3.5 h-3.5 text-sky-600 shrink-0" />
           <span className="whitespace-nowrap">{status}</span>
         </span>
       );

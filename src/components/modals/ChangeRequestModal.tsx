@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, AlertCircle, Send, Calendar, Clock } from 'lucide-react';
 import { ScheduleItem } from '../../types';
 import { formatReadableDate } from '../../utils/dateTimeUtils';
+import { Modal } from '../common/Modal';
 
 interface ChangeRequestModalProps {
   isOpen: boolean;
@@ -46,10 +47,9 @@ export const ChangeRequestModal: React.FC<ChangeRequestModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xl max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+    <Modal isOpen={isOpen} onClose={onClose} ariaLabel="Request schedule change" sizeClassName="max-w-lg">
         {/* Header */}
-        <div className="p-5 border-b border-slate-200 flex items-start justify-between bg-slate-50">
+        <div className="p-5 border-b border-slate-200 flex items-start justify-between bg-slate-50 shrink-0">
           <div>
             <div className="flex items-center gap-1.5 text-indigo-700">
               <AlertCircle className="w-4 h-4" />
@@ -70,8 +70,8 @@ export const ChangeRequestModal: React.FC<ChangeRequestModalProps> = ({
         </div>
 
         {/* Schedule Summary */}
-        <form onSubmit={handleSubmit}>
-          <div className="p-5 space-y-4">
+        <form onSubmit={handleSubmit} className="min-h-0 flex-1 flex flex-col">
+          <div className="min-h-0 flex-1 overflow-y-auto p-5 space-y-4">
             <div className="p-3.5 rounded-xl bg-slate-50 border border-slate-200/80 space-y-1.5 text-xs">
               <div className="font-semibold text-slate-900 text-sm">{schedule.moduleName}</div>
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-slate-600">
@@ -120,7 +120,7 @@ export const ChangeRequestModal: React.FC<ChangeRequestModalProps> = ({
           </div>
 
           {/* Footer */}
-          <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2">
+          <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-end gap-2 shrink-0">
             <button
               type="button"
               onClick={onClose}
@@ -137,7 +137,6 @@ export const ChangeRequestModal: React.FC<ChangeRequestModalProps> = ({
             </button>
           </div>
         </form>
-      </div>
-    </div>
+    </Modal>
   );
 };

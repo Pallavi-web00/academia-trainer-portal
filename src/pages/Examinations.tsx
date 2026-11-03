@@ -19,6 +19,7 @@ import { getScheduleBatchId, parseTimeToMinutes } from '../utils/dateTimeUtils';
 import { EmptyState } from '../components/common/EmptyState';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { CustomDropdown } from '../components/common/CustomDropdown';
+import { Modal } from '../components/common/Modal';
 
 type ExaminationTab = 'pending' | 'approved' | 'history';
 type RequestDraft = Pick<
@@ -312,7 +313,6 @@ export const Examinations: React.FC = () => {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-slate-900">Examination Management</h2>
           <p className="mt-0.5 text-xs text-slate-500 sm:text-sm">Submit examination proposals and review simulated admin decisions.</p>
         </div>
         <button type="button" onClick={openNewForm} className="inline-flex items-center justify-center gap-2 self-start rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-2xs hover:bg-indigo-700">
@@ -371,13 +371,13 @@ export const Examinations: React.FC = () => {
       )}
 
       {showForm && (
-        <div className="fixed inset-0 z-[70] flex items-start justify-center overflow-y-auto bg-slate-900/50 p-3 py-8 sm:p-6" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowForm(false); }}>
-          <form onSubmit={submitForm} className="w-full max-w-3xl rounded-2xl border border-slate-200 bg-white shadow-2xl" aria-labelledby="examination-form-title">
-            <div className="flex items-start justify-between border-b border-slate-100 p-5">
+        <Modal isOpen={showForm} onClose={() => setShowForm(false)} ariaLabel={revisionOf ? 'Revise examination request' : 'Schedule examination'} sizeClassName="max-w-3xl">
+          <form onSubmit={submitForm} className="min-h-0 flex-1 flex flex-col">
+            <div className="flex items-start justify-between border-b border-slate-100 p-5 shrink-0">
               <div><h3 id="examination-form-title" className="text-base font-bold text-slate-900">{revisionOf ? 'Revise Examination Request' : 'Schedule Examination'}</h3><p className="mt-1 text-xs text-slate-500">{revisionOf ? `New revision linked to ${revisionOf.id}; the rejected request will remain in history.` : 'Submit a proposed examination schedule for admin review.'}</p></div>
               <button type="button" onClick={() => setShowForm(false)} aria-label="Close form" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"><X className="h-5 w-5" /></button>
             </div>
-            <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
+            <div className="min-h-0 flex-1 overflow-y-auto grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
               <label className="sm:col-span-2"><span className="mb-1 block text-xs font-semibold text-slate-700">Examination title <b className="text-rose-600">*</b></span><input required value={draft.title} onChange={(event) => setDraftField('title', event.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/10" /></label>
               <label><span className="mb-1 block text-xs font-semibold text-slate-700">Batch <b className="text-rose-600">*</b></span><CustomDropdown required value={draft.batchId} onChange={(value) => { setDraftField('batchId', value); setDraftField('moduleId', ''); }} placeholder="Select batch" ariaLabel="Batch" options={batchOptions.map(([id, name]) => ({ value: id, label: name }))} /></label>
               <label><span className="mb-1 block text-xs font-semibold text-slate-700">Module <b className="text-rose-600">*</b></span><CustomDropdown required value={draft.moduleId} onChange={(value) => setDraftField('moduleId', value)} placeholder="Select module" ariaLabel="Module" options={moduleOptions.map((module) => ({ value: module.id, label: module.name }))} /></label>
@@ -392,22 +392,21 @@ export const Examinations: React.FC = () => {
               {conflict && <p role="alert" className="sm:col-span-2 flex gap-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800"><AlertCircle className="h-4 w-4 shrink-0" />{conflict}</p>}
               {formError && <p role="alert" className="sm:col-span-2 rounded-lg border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">{formError}</p>}
             </div>
-            <div className="flex flex-col-reverse gap-2 border-t border-slate-100 p-5 sm:flex-row sm:justify-end">
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-100 p-5 sm:flex-row sm:justify-end shrink-0">
               <button type="button" onClick={() => setShowForm(false)} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Cancel</button>
               <button type="submit" className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">Submit for Admin Review</button>
             </div>
           </form>
-        </div>
+        </Modal>
       )}
 
       {selectedRequest && (
-        <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-y-auto bg-slate-900/50 p-3 sm:p-6" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) { setSelectedRequest(null); setSearchParams({}); } }}>
-          <section className="my-auto max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="request-detail-title">
-            <div className="sticky top-0 flex items-start justify-between border-b border-slate-100 bg-white p-5">
+        <Modal isOpen={Boolean(selectedRequest)} onClose={() => { setSelectedRequest(null); setSearchParams({}); }} ariaLabel={`Examination details for ${selectedRequest.title}`} sizeClassName="max-w-3xl">
+          <div className="flex items-start justify-between border-b border-slate-100 bg-white p-5 shrink-0">
               <div><div className="flex flex-wrap items-center gap-2"><h3 id="request-detail-title" className="text-base font-bold text-slate-900">{selectedRequest.title}</h3><StateBadge status={selectedRequest.requestStatus} /><StatusBadge status={selectedRequest.eventStatus} size="sm" /></div><p className="mt-1 text-xs text-slate-500">{selectedRequest.id}{selectedRequest.originalRequestId ? ` · Revision of ${selectedRequest.originalRequestId}` : ''}</p></div>
               <button type="button" onClick={() => { setSelectedRequest(null); setSearchParams({}); }} aria-label="Close details" className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100"><X className="h-5 w-5" /></button>
             </div>
-            <div className="space-y-5 p-5">
+            <div className="min-h-0 flex-1 overflow-y-auto space-y-5 p-5">
               <div className="grid grid-cols-1 gap-3 rounded-xl bg-slate-50 p-4 text-xs sm:grid-cols-2">
                 <div><p className="text-slate-400">Batch / module</p><p className="mt-1 font-semibold text-slate-800">{selectedRequest.batchName} · {selectedRequest.moduleName}</p></div>
                 <div><p className="text-slate-400">Type / mode</p><p className="mt-1 font-semibold text-slate-800">{selectedRequest.type} · {selectedRequest.mode}</p></div>
@@ -440,8 +439,7 @@ export const Examinations: React.FC = () => {
                 </>
               )}
             </div>
-          </section>
-        </div>
+        </Modal>
       )}
     </div>
   );

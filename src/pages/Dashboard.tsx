@@ -397,7 +397,6 @@ export const Dashboard: React.FC = () => {
 
                       <div className="flex flex-wrap sm:flex-col items-end gap-2 shrink-0">
                         <div className="flex items-center gap-2">
-                          <StatusBadge status={item.approvalStatus} size="sm" />
                           <StatusBadge
                             status={getTodaysSyllabusStatus(item, schedules, activityHistory, currentTime)}
                             size="sm"

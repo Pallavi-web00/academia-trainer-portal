@@ -148,7 +148,6 @@ export const MyClassSchedule: React.FC = () => {
             <Layers className="w-4 h-4" />
             <span>{module.name}</span>
           </div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">My Class Schedule</h2>
           <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
             Trainer working hours: <strong className="text-slate-700 font-mono-numbers">09:00 AM – 06:00 PM</strong> · Lunch hour: <strong className="text-slate-700 font-mono-numbers">01:00 PM – 02:00 PM</strong>.
           </p>

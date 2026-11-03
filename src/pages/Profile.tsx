@@ -23,7 +23,6 @@ export const Profile: React.FC = () => {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-bold text-slate-900 tracking-tight">Trainer Profile</h2>
         <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
           Faculty identity, institutional role, assigned cohorts, and mock configuration reference.
         </p>

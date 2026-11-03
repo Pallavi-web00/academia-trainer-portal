@@ -127,7 +127,6 @@ export const SessionHistory: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Session History</h2>
           <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
             Archived log of past and assigned academic sessions, conducted outcomes, and institutional attendance records.
           </p>

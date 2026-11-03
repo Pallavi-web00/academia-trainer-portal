@@ -348,7 +348,6 @@ export const SyllabusTracker: React.FC = () => {
     return (
       <div className="space-y-6">
         <div>
-          <h2 className="text-xl font-bold text-slate-900 tracking-tight">Syllabus Tracker</h2>
           <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
             Syllabus progress is gated by schedule confirmation.
           </p>
@@ -936,7 +935,7 @@ export const SyllabusTracker: React.FC = () => {
                     : topicStatus === 'Class Being Taken Again'
                       ? 'border-amber-200 bg-amber-50 text-amber-700'
                       : topicStatus === 'Assessment In Progress' || topicStatus === 'MCQ Sent'
-                        ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                        ? 'border-sky-200 bg-sky-50 text-sky-700'
                         : 'border-slate-200 bg-slate-50 text-slate-600';
                 const isScorePanelOpen = expandedScoreTopicId === topic.id;
                 const selectedAssessment = attempts.find((assessment) => assessment.id === expandedAssessmentId) || attempts[0];
@@ -971,7 +970,7 @@ export const SyllabusTracker: React.FC = () => {
                     ? 'border-rose-200 bg-rose-50 text-rose-700'
                     : panelStatus === 'Class Being Taken Again'
                       ? 'border-amber-200 bg-amber-50 text-amber-700'
-                      : 'border-indigo-200 bg-indigo-50 text-indigo-700';
+                      : 'border-sky-200 bg-sky-50 text-sky-700';
 
                 return (
                   <div key={topic.id}>
@@ -1119,9 +1118,7 @@ export const SyllabusTracker: React.FC = () => {
                           <div className="flex flex-wrap gap-1.5">
                             <span className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold ${
                               selectedAssessment.status === 'Completed'
-                                ? selectedAttemptEligible
-                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                                  : 'border-rose-200 bg-rose-50 text-rose-700'
+                                ? 'border-sky-200 bg-sky-50 text-sky-700'
                                 : panelStatusClass
                             }`}>
                               {selectedAssessment.status === 'Completed' ? 'Assessment Completed' : panelStatus}

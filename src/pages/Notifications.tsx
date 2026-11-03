@@ -37,53 +37,9 @@ export const Notifications: React.FC = () => {
   const resolvedCount = notifications.filter((n) => n.isResolved).length;
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h2 className="text-xl font-bold text-slate-900 tracking-tight">
-          Notifications & Alerts
-        </h2>
-        <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-          Simulated overdue syllabus reminders, schedule approvals, and academic compliance alerts.
-        </p>
-      </div>
-
+    <div className="space-y-2">
       {/* Tabs & Filter Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 rounded-xl bg-white border border-slate-200 shadow-2xs">
-        {/* Tabs */}
-        <div className="flex items-center gap-1 p-1 bg-slate-100 rounded-lg self-start">
-          <button
-            onClick={() => setActiveTab('ALL')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              activeTab === 'ALL'
-                ? 'bg-white text-slate-900 shadow-2xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            All ({notifications.length})
-          </button>
-          <button
-            onClick={() => setActiveTab('PENDING')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              activeTab === 'PENDING'
-                ? 'bg-white text-slate-900 shadow-2xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Pending ({pendingCount})
-          </button>
-          <button
-            onClick={() => setActiveTab('RESOLVED')}
-            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-              activeTab === 'RESOLVED'
-                ? 'bg-white text-slate-900 shadow-2xs'
-                : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            Resolved ({resolvedCount})
-          </button>
-        </div>
-
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 rounded-xl max-w-[180px] bg-white border border-slate-200 shadow-2xs">
         {/* Category selector */}
         <div className="flex items-center gap-2">
           <Filter className="w-3.5 h-3.5 text-slate-400" />

@@ -2,6 +2,7 @@ import React from 'react';
 import { X, Calendar, Clock, MapPin, CheckCircle2, AlertTriangle, Users } from 'lucide-react';
 import { ScheduleItem, SyllabusActivityEvent } from '../../types';
 import { StatusBadge } from '../common/StatusBadge';
+import { Modal } from '../common/Modal';
 import { formatReadableDate, getScheduleBatchId } from '../../utils/dateTimeUtils';
 
 interface SessionDetailsModalProps {
@@ -29,8 +30,7 @@ export const SessionDetailsModal: React.FC<SessionDetailsModalProps> = ({
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xl max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 max-h-[85vh] flex flex-col">
+    <Modal isOpen={isOpen} onClose={onClose} ariaLabel={`Session record ${session.sessionNumber}`} sizeClassName="max-w-lg">
         {/* Header */}
         <div className="p-5 border-b border-slate-200 flex items-start justify-between bg-slate-50 shrink-0">
           <div>
@@ -52,7 +52,7 @@ export const SessionDetailsModal: React.FC<SessionDetailsModalProps> = ({
         </div>
 
         {/* Content */}
-        <div className="p-5 space-y-4 overflow-y-auto flex-1 text-xs">
+        <div className="min-h-0 flex-1 overflow-y-auto p-5 space-y-4 text-xs">
           <div className="grid grid-cols-2 gap-3">
             <div className="p-3 rounded-xl bg-slate-50 border border-slate-200/70">
               <span className="text-slate-500 block mb-0.5">Session Date</span>
@@ -176,7 +176,6 @@ export const SessionDetailsModal: React.FC<SessionDetailsModalProps> = ({
             Close Details
           </button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 };
