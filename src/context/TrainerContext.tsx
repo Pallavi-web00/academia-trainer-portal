@@ -10,7 +10,8 @@ import {
   AdminTaskStatus,
   FreeHourSlot,
   ScheduledSyllabusSession,
-  ExaminationRequest
+  ExaminationRequest,
+  SyllabusAssessment
 } from '../types';
 import { initialModulesData } from '../data/modulesData';
 import {
@@ -32,6 +33,11 @@ import {
 } from '../utils/dateTimeUtils';
 import { generateReminders } from '../utils/reminderLogic';
 import { getExaminationNotifications, getInitialExaminationRequests } from '../data/examinationData';
+import {
+  createSyllabusAssessmentQuestions,
+  getInitialAssessmentActivityEvents,
+  getInitialSyllabusAssessments
+} from '../data/syllabusAssessmentData';
 
 interface TrainerContextType {
   trainer: TrainerProfile;
@@ -47,6 +53,7 @@ interface TrainerContextType {
   activityHistory: SyllabusActivityEvent[];
   notifications: NotificationItem[];
   examinationRequests: ExaminationRequest[];
+  syllabusAssessments: SyllabusAssessment[];
   activeRemindersCount: number;
   pendingApprovalsCount: number;
   todayClassesCount: number;
@@ -63,6 +70,9 @@ interface TrainerContextType {
     sessionContextId: string,
     scheduledDate?: string
   ) => boolean;
+  sendSyllabusAssessment: (batchId: string, moduleId: string, topicId: string) => SyllabusAssessment | undefined;
+  simulateSyllabusAssessmentResponses: (assessmentId: string) => void;
+  conductTopicAgain: (batchId: string, moduleId: string, topicId: string) => boolean;
   recordClassNotConducted: (payload: {
     moduleId: string;
     scheduledDate: string;
@@ -87,7 +97,8 @@ const STORAGE_KEYS = {
   ACTIVITY: 'academia_trainer_activity_v10',
   ADMIN_TASKS: 'academia_trainer_admin_tasks_v6',
   RESOLVED_NOTIFS: 'academia_trainer_resolved_notifs_v10',
-  EXAMINATIONS: 'academia_trainer_examination_requests_v1'
+  EXAMINATIONS: 'academia_trainer_examination_requests_v1',
+  ASSESSMENTS: 'academia_trainer_syllabus_assessments_v1'
 };
 
 export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
@@ -131,6 +142,17 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
       }));
     } catch {
       return getInitialSchedules();
+    }
+  });
+
+  const [syllabusAssessments, setSyllabusAssessments] = useState<SyllabusAssessment[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.ASSESSMENTS);
+      return saved
+        ? JSON.parse(saved) as SyllabusAssessment[]
+        : getInitialSyllabusAssessments(schedules, initialModulesData[0]);
+    } catch {
+      return getInitialSyllabusAssessments(schedules, initialModulesData[0]);
     }
   });
 
@@ -179,11 +201,26 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [activityHistory, setActivityHistory] = useState<SyllabusActivityEvent[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.ACTIVITY);
-      if (!saved) return getInitialActivityEvents();
+      if (!saved) {
+        const initialAssessments = getInitialSyllabusAssessments(schedules, initialModulesData[0]);
+        return [
+          ...getInitialActivityEvents(schedules),
+          ...getInitialAssessmentActivityEvents(initialAssessments, initialModulesData[0])
+        ];
+      }
 
       const parsed: SyllabusActivityEvent[] = JSON.parse(saved);
-      const migratedEvents = parsed.flatMap((event) => {
+      const migratedEvents = parsed.flatMap<SyllabusActivityEvent>((event) => {
         if (event.id.startsWith('act-seed-')) return [];
+        if (event.assessmentId) {
+          const schedule = schedules.find(
+            (item) => getScheduleBatchId(item) === event.batchId && item.moduleId === event.moduleId
+          );
+          const topic = initialModulesData
+            .find((item) => item.id === event.moduleId)
+            ?.topics.find((item) => item.id === event.topicId);
+          return schedule && topic ? [{ ...event, topicName: topic.title, topicNumber: topic.number }] : [];
+        }
         const matchingBySession = schedules.filter(
           (schedule) =>
             schedule.moduleId === event.moduleId &&
@@ -236,9 +273,15 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
         }];
       });
 
-      const seededEvents = getInitialActivityEvents(schedules);
+      const initialAssessments = getInitialSyllabusAssessments(schedules, initialModulesData[0]);
+      const seededEvents = [
+        ...getInitialActivityEvents(schedules),
+        ...getInitialAssessmentActivityEvents(initialAssessments, initialModulesData[0])
+      ];
       const eventKey = (event: SyllabusActivityEvent) =>
-        [event.batchId, event.moduleId, event.eventType, event.topicId || '', event.sessionId || ''].join('|');
+        event.assessmentId
+          ? `${event.assessmentId}|${event.id}`
+          : [event.batchId, event.moduleId, event.eventType, event.topicId || '', event.sessionId || ''].join('|');
       const uniqueEvents = new Map<string, SyllabusActivityEvent>();
       [...seededEvents, ...migratedEvents].forEach((event) => uniqueEvents.set(eventKey(event), event));
       const mergedEvents = [...uniqueEvents.values()];
@@ -398,6 +441,10 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
     localStorage.setItem(STORAGE_KEYS.EXAMINATIONS, JSON.stringify(examinationRequests));
   }, [examinationRequests]);
 
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.ASSESSMENTS, JSON.stringify(syllabusAssessments));
+  }, [syllabusAssessments]);
+
   // Toast Management
   const addToast = (toast: Omit<ToastMessage, 'id'>) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
@@ -454,6 +501,57 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
     return true;
   };
 
+  const recordAssessmentActivity = (
+    assessment: SyllabusAssessment,
+    eventType: SyllabusActivityEvent['eventType'],
+    details: string,
+    timestamp = new Date().toISOString()
+  ) => {
+    const targetModule = modules.find((item) => item.id === assessment.moduleId);
+    const topic = targetModule?.topics.find((item) => item.id === assessment.topicId);
+    if (!targetModule || !topic) return;
+
+    const event: SyllabusActivityEvent = {
+      id: `${assessment.id}-${eventType.toLowerCase().replaceAll(' ', '-')}-${Date.now()}`,
+      timestamp,
+      displayDate: timestamp.slice(0, 10),
+      batchId: assessment.batchId,
+      moduleId: assessment.moduleId,
+      moduleName: targetModule.name,
+      eventType,
+      topicId: topic.id,
+      topicName: topic.title,
+      topicNumber: topic.number,
+      assessmentId: assessment.id,
+      details,
+      savedStatus: 'Saved'
+    };
+    setActivityHistory((previous) => [event, ...previous]);
+  };
+
+  const latestSyllabusAssessment = (batchId: string, moduleId: string, topicId: string) =>
+    syllabusAssessments
+      .filter((assessment) =>
+        assessment.batchId === batchId &&
+        assessment.moduleId === moduleId &&
+        assessment.topicId === topicId
+      )
+      .sort((a, b) => b.attempt - a.attempt || b.sentAt.localeCompare(a.sentAt))[0];
+
+  const isSyllabusAssessmentEligible = (
+    assessment: SyllabusAssessment | undefined,
+    expectedStudents: ScheduleItem['students']
+  ) => {
+    if (!assessment || assessment.status !== 'Completed' || assessment.students.length !== expectedStudents.length) {
+      return false;
+    }
+    const resultsByStudent = new Map(assessment.students.map((result) => [result.studentId, result]));
+    return expectedStudents.every((student) => {
+      const result = resultsByStudent.get(student.id);
+      return result?.score !== null && result?.score !== undefined && (result.score / 10) * 100 > 75;
+    });
+  };
+
   // Submit Syllabus Updates
   const submitSyllabusUpdates = (
     moduleId: string,
@@ -479,6 +577,25 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
         type: 'error',
         title: 'Unable to Save Syllabus',
         message: 'The selected module and batch could not be matched. Please reopen the batch and try again.'
+      });
+      return false;
+    }
+
+    const batchId = getScheduleBatchId(affectedSession);
+    const ineligibleTopicIds = topicIds.filter((topicId) =>
+      !isSyllabusAssessmentEligible(
+        latestSyllabusAssessment(batchId, moduleId, topicId),
+        affectedSession.students
+      )
+    );
+    if (ineligibleTopicIds.length > 0) {
+      const names = ineligibleTopicIds
+        .map((topicId) => targetModule.topics.find((topic) => topic.id === topicId)?.title)
+        .filter((name): name is string => Boolean(name));
+      addToast({
+        type: 'error',
+        title: 'Assessment Criteria Not Met',
+        message: `${names.join(', ')} cannot be submitted until every student has submitted and scored above 75%.`
       });
       return false;
     }
@@ -591,6 +708,190 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
       message: `Successfully recorded ${topicIds.length} topic${topicIds.length > 1 ? 's' : ''} for ${formatReadableDate(scheduledDate)}.`
     });
 
+    return true;
+  };
+
+  const sendSyllabusAssessment = (
+    batchId: string,
+    moduleId: string,
+    topicId: string
+  ): SyllabusAssessment | undefined => {
+    const schedule = schedules.find(
+      (item) => getScheduleBatchId(item) === batchId && item.moduleId === moduleId
+    );
+    const targetModule = modules.find((item) => item.id === moduleId);
+    const topic = targetModule?.topics.find((item) => item.id === topicId);
+    if (!schedule || !targetModule || !topic) {
+      addToast({
+        type: 'error',
+        title: 'Unable to Send MCQ',
+        message: 'The selected batch, module, or syllabus topic could not be matched.'
+      });
+      return undefined;
+    }
+
+    const latest = latestSyllabusAssessment(batchId, moduleId, topicId);
+    if (latest && latest.status !== 'Completed') {
+      addToast({
+        type: 'warning',
+        title: 'Assessment Still In Progress',
+        message: 'Wait until all students have submitted this assessment before sending another one.'
+      });
+      return undefined;
+    }
+    if (latest && isSyllabusAssessmentEligible(latest, schedule.students)) {
+      addToast({
+        type: 'info',
+        title: 'Assessment Passed',
+        message: 'All students scored above 75%. Submit this topic to Admin instead of sending another assessment.'
+      });
+      return undefined;
+    }
+    if (latest && !latest.classAgainStartedAt) {
+      addToast({
+        type: 'warning',
+        title: 'Class Retake Required',
+        message: 'Conduct the topic again before sending a fresh assessment.'
+      });
+      return undefined;
+    }
+
+    const sentAt = new Date().toISOString();
+    const assessment: SyllabusAssessment = {
+      id: `mcq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      batchId,
+      moduleId,
+      topicId,
+      topicName: topic.title,
+      attempt: (latest?.attempt || 0) + 1,
+      questions: createSyllabusAssessmentQuestions(topicId, topic.title, targetModule.topics),
+      students: schedule.students.map((student) => ({
+        studentId: student.id,
+        studentName: student.name,
+        score: null
+      })),
+      status: 'Sent',
+      sentAt
+    };
+    setSyllabusAssessments((previous) => [assessment, ...previous]);
+    recordAssessmentActivity(
+      assessment,
+      'MCQ Assessment Sent',
+      `${assessment.questions.length} questions sent to ${assessment.students.length} students.`
+    );
+    addToast({
+      type: 'success',
+      title: 'MCQ Assessment Sent',
+      message: `10 topic-specific questions have been sent to the ${schedule.batch} batch through the mock LMS workflow.`
+    });
+    return assessment;
+  };
+
+  const simulateSyllabusAssessmentResponses = (assessmentId: string) => {
+    const assessment = syllabusAssessments.find((item) => item.id === assessmentId);
+    if (!assessment || assessment.status === 'Completed') {
+      if (!assessment) {
+        addToast({
+          type: 'error',
+          title: 'Assessment Not Found',
+          message: 'The assessment could not be found. Refresh the tracker and try again.'
+        });
+      }
+      return;
+    }
+
+    const submittedCount = assessment.students.filter((student) => student.score !== null).length;
+    const submitTarget = submittedCount === 0
+      ? Math.max(1, Math.ceil(assessment.students.length / 2))
+      : assessment.students.length;
+    let newlySubmitted = 0;
+    const students = assessment.students.map((student, index) => {
+      if (student.score !== null || newlySubmitted >= submitTarget - submittedCount) return student;
+      newlySubmitted += 1;
+      const score = assessment.attempt === 1 && index === 2 ? 7 : 8 + (index % 3);
+      return { ...student, score, submittedAt: new Date().toISOString() };
+    });
+    const completed = students.every((student) => student.score !== null);
+    const updatedAssessment: SyllabusAssessment = {
+      ...assessment,
+      students,
+      status: completed ? 'Completed' : 'In Progress',
+      ...(completed ? { completedAt: new Date().toISOString() } : {})
+    };
+    setSyllabusAssessments((previous) =>
+      previous.map((item) => item.id === assessmentId ? updatedAssessment : item)
+    );
+
+    if (completed) {
+      const failedCount = students.filter((student) => student.score === null || (student.score / 10) * 100 <= 75).length;
+      recordAssessmentActivity(
+        updatedAssessment,
+        'MCQ Assessment Completed',
+        failedCount === 0 ? 'All students scored above 75%.' : `${failedCount} student${failedCount === 1 ? '' : 's'} scored 75% or below.`,
+        updatedAssessment.completedAt
+      );
+      if (failedCount > 0) {
+        recordAssessmentActivity(
+          updatedAssessment,
+          'Topic Requires Retake',
+          `${failedCount} student${failedCount === 1 ? '' : 's'} scored 75% or below.`,
+          updatedAssessment.completedAt
+        );
+      }
+      addToast({
+        type: failedCount === 0 ? 'success' : 'warning',
+        title: failedCount === 0 ? 'Assessment Completed' : 'Topic Requires Retake',
+        message: failedCount === 0
+          ? 'Every student scored above 75%. The topic is eligible for submission to Admin.'
+          : `${failedCount} student${failedCount === 1 ? '' : 's'} scored 75% or below. Conduct the topic again before a fresh assessment.`
+      });
+      return;
+    }
+
+    addToast({
+      type: 'info',
+      title: 'LMS Responses Received',
+      message: `${students.filter((student) => student.score !== null).length} of ${students.length} students have submitted.`
+    });
+  };
+
+  const conductTopicAgain = (batchId: string, moduleId: string, topicId: string): boolean => {
+    const latest = latestSyllabusAssessment(batchId, moduleId, topicId);
+    const isFailed = latest?.status === 'Completed' &&
+      latest.students.some((student) => student.score === null || (student.score / 10) * 100 <= 75);
+    if (!latest || !isFailed) {
+      addToast({
+        type: 'error',
+        title: 'Retake Not Available',
+        message: 'A completed assessment with at least one score of 75% or below is required.'
+      });
+      return false;
+    }
+    if (latest.classAgainStartedAt) {
+      addToast({
+        type: 'info',
+        title: 'Retake Already Recorded',
+        message: 'This topic is already marked as being taught again.'
+      });
+      return false;
+    }
+
+    const startedAt = new Date().toISOString();
+    const updatedAssessment = { ...latest, classAgainStartedAt: startedAt };
+    setSyllabusAssessments((previous) =>
+      previous.map((assessment) => assessment.id === latest.id ? updatedAssessment : assessment)
+    );
+    recordAssessmentActivity(
+      updatedAssessment,
+      'Topic Being Taken Again',
+      'Trainer conducting another session for this topic.',
+      startedAt
+    );
+    addToast({
+      type: 'success',
+      title: 'Retake Recorded',
+      message: `Another teaching session for ${latest.topicName} has been recorded and Admin has been notified.`
+    });
     return true;
   };
 
@@ -801,7 +1102,19 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
   const allGeneratedNotifications = useMemo(() => {
     return [
       ...generateReminders(schedules, activityHistory, currentTime),
-      ...getExaminationNotifications(examinationRequests)
+      ...getExaminationNotifications(examinationRequests),
+      ...activityHistory
+        .filter((event) => event.eventType === 'Topic Being Taken Again')
+        .map((event) => ({
+          id: `retake-${event.id}`,
+          title: 'Topic Retake Started',
+          message: `${event.topicName || 'Syllabus topic'} is being taught again for ${event.batchId}.`,
+          timestamp: event.timestamp,
+          category: 'system' as const,
+          isResolved: false,
+          moduleId: event.moduleId,
+          actionLabel: 'Review Syllabus Tracker'
+        }))
     ];
   }, [schedules, activityHistory, currentTime, examinationRequests]);
 
@@ -888,14 +1201,21 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
     localStorage.removeItem(STORAGE_KEYS.ACTIVITY);
     localStorage.removeItem(STORAGE_KEYS.RESOLVED_NOTIFS);
     localStorage.removeItem(STORAGE_KEYS.EXAMINATIONS);
+    localStorage.removeItem(STORAGE_KEYS.ASSESSMENTS);
 
     setModules(initialModulesData);
     setSchedules(getInitialSchedules());
     setSyllabusSessions(getInitialScheduledSessions());
     setAdminTasks(getInitialAdminTasks());
-    setActivityHistory(getInitialActivityEvents());
+    const initialSchedules = getInitialSchedules();
+    const initialAssessments = getInitialSyllabusAssessments(initialSchedules, initialModulesData[0]);
+    setActivityHistory([
+      ...getInitialActivityEvents(initialSchedules),
+      ...getInitialAssessmentActivityEvents(initialAssessments, initialModulesData[0])
+    ]);
+    setSyllabusAssessments(initialAssessments);
     setResolvedNotifIds([]);
-    setExaminationRequests(getInitialExaminationRequests(getInitialSchedules()));
+    setExaminationRequests(getInitialExaminationRequests(initialSchedules));
 
     addToast({
       type: 'info',
@@ -920,6 +1240,7 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
         activityHistory,
         notifications,
         examinationRequests,
+        syllabusAssessments,
         activeRemindersCount,
         pendingApprovalsCount,
         todayClassesCount,
@@ -931,6 +1252,9 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
         approveSchedule,
         requestScheduleChange,
         submitSyllabusUpdates,
+        sendSyllabusAssessment,
+        simulateSyllabusAssessmentResponses,
+        conductTopicAgain,
         recordClassNotConducted,
         updateAdminTaskStatus,
         resolveNotification,

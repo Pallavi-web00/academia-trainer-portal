@@ -73,15 +73,53 @@ export interface SyllabusActivityEvent {
   batchId: string;
   moduleId: string;
   moduleName: string;
-  eventType: 'Topic Completed' | 'Class Not Conducted';
+  eventType:
+    | 'Topic Completed'
+    | 'Class Not Conducted'
+    | 'MCQ Assessment Sent'
+    | 'MCQ Assessment Completed'
+    | 'Topic Requires Retake'
+    | 'Topic Being Taken Again';
   scheduledDate?: string;
   topicId?: string;
   topicName?: string;
   topicNumber?: number;
+  assessmentId?: string;
+  details?: string;
   sessionId?: string;
   sessionIdentifier?: string; // e.g. "Session 12 (09:00 AM - 10:00 AM)"
   reason?: string;
   savedStatus: 'Saved' | 'Pending';
+}
+
+export interface SyllabusAssessmentQuestion {
+  question: string;
+  options: string[];
+  correctOption: number;
+}
+
+export interface SyllabusAssessmentStudentResult {
+  studentId: string;
+  studentName: string;
+  score: number | null;
+  submittedAt?: string;
+}
+
+export type SyllabusAssessmentStatus = 'Sent' | 'In Progress' | 'Completed';
+
+export interface SyllabusAssessment {
+  id: string;
+  batchId: string;
+  moduleId: string;
+  topicId: string;
+  topicName: string;
+  attempt: number;
+  questions: SyllabusAssessmentQuestion[];
+  students: SyllabusAssessmentStudentResult[];
+  status: SyllabusAssessmentStatus;
+  sentAt: string;
+  completedAt?: string;
+  classAgainStartedAt?: string;
 }
 
 export interface NotificationItem {

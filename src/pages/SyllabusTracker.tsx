@@ -25,7 +25,9 @@ import {
   ListChecks,
   ShieldCheck,
   ExternalLink,
-  RotateCcw
+  RotateCcw,
+  Eye,
+  Send
 } from 'lucide-react';
 import { useTrainer } from '../context/TrainerContext';
 import { calculateModuleProgress } from '../utils/syllabusProgress';
@@ -54,6 +56,10 @@ export const SyllabusTracker: React.FC = () => {
     currentTime,
     activityHistory,
     submitSyllabusUpdates,
+    syllabusAssessments,
+    sendSyllabusAssessment,
+    simulateSyllabusAssessmentResponses,
+    conductTopicAgain,
     recordClassNotConducted
   } = useTrainer();
 
@@ -87,6 +93,8 @@ export const SyllabusTracker: React.FC = () => {
 
   // Form & Interaction state for the active batch
   const [selectedTopicIds, setSelectedTopicIds] = useState<string[]>([]);
+  const [expandedScoreTopicId, setExpandedScoreTopicId] = useState<string | null>(null);
+  const [expandedAssessmentId, setExpandedAssessmentId] = useState<string | null>(null);
   const [isMissedModalOpen, setIsMissedModalOpen] = useState(false);
   const [rosterBatch, setRosterBatch] = useState<ScheduleItem | null>(null);
   const [activeDateContext, setActiveDateContext] = useState<string>(dateParam || getCurrentDateISO());
@@ -153,6 +161,8 @@ export const SyllabusTracker: React.FC = () => {
   const handleBackToBatches = () => {
     setSelectedBatchId(null);
     setSelectedTopicIds([]);
+    setExpandedScoreTopicId(null);
+    setExpandedAssessmentId(null);
     setTopicSearch('');
     // Remove query params to keep URL clean
     navigate('/syllabus', { replace: true });
@@ -171,14 +181,50 @@ export const SyllabusTracker: React.FC = () => {
   // "only then the trainer can update the syllabus completed, this update will be seen in the table in the my class schedule menu"
   const handleSaveTopics = () => {
     if (!currentBatch) return;
+    const eligibleTopicIds = selectedTopicIds.filter((topicId) => {
+      const attempts = syllabusAssessments
+        .filter((assessment) =>
+          assessment.batchId === getScheduleBatchId(currentBatch) &&
+          assessment.moduleId === module.id &&
+          assessment.topicId === topicId
+        )
+        .sort((a, b) => b.attempt - a.attempt);
+      const latest = attempts[0];
+      const resultsByStudent = new Map(latest?.students.map((student) => [student.studentId, student]));
+      return Boolean(
+        latest &&
+        latest.status === 'Completed' &&
+        latest.students.length === currentBatch.students.length &&
+        currentBatch.students.every((student) => {
+          const result = resultsByStudent.get(student.id);
+          return result?.score !== null && result?.score !== undefined && (result.score / 10) * 100 > 75;
+        })
+      );
+    });
+    if (eligibleTopicIds.length === 0) return;
+    const submissionDate = syllabusSessions.some(
+      (session) =>
+        session.scheduleId === currentBatch.id &&
+        session.scheduledDate === activeDateContext
+    )
+      ? activeDateContext
+      : syllabusSessions
+        .filter((session) =>
+          session.scheduleId === currentBatch.id &&
+          session.scheduledDate <= activeDateContext
+        )
+        .sort((a, b) => b.scheduledDate.localeCompare(a.scheduledDate))[0]?.scheduledDate
+        || activeDateContext;
     const ok = submitSyllabusUpdates(
       module.id,
-      selectedTopicIds,
+      eligibleTopicIds,
       currentBatch.id,
-      activeDateContext
+      submissionDate
     );
     if (ok) {
-      setSelectedTopicIds([]);
+      setSelectedTopicIds((previous) => previous.filter((topicId) => !eligibleTopicIds.includes(topicId)));
+      setExpandedScoreTopicId(null);
+      setExpandedAssessmentId(null);
     }
   };
 
@@ -210,6 +256,34 @@ export const SyllabusTracker: React.FC = () => {
       return true;
     });
   }, [module.topics, topicSearch, filterMode, activeBatchCompletedTopicIds]);
+
+  const getTopicAssessments = (topicId: string) => {
+    if (!currentBatch) return [];
+    return syllabusAssessments
+      .filter((assessment) =>
+        assessment.batchId === getScheduleBatchId(currentBatch) &&
+        assessment.moduleId === module.id &&
+        assessment.topicId === topicId
+      )
+      .sort((a, b) => b.attempt - a.attempt || b.sentAt.localeCompare(a.sentAt));
+  };
+
+  const getAssessmentEligibility = (topicId: string) => {
+    if (!currentBatch) return false;
+    const latest = getTopicAssessments(topicId)[0];
+    const resultsByStudent = new Map(latest?.students.map((student) => [student.studentId, student]));
+    return Boolean(
+      latest &&
+      latest.status === 'Completed' &&
+      latest.students.length === currentBatch.students.length &&
+      currentBatch.students.every((student) => {
+        const result = resultsByStudent.get(student.id);
+        return result?.score !== null && result?.score !== undefined && (result.score / 10) * 100 > 75;
+      })
+    );
+  };
+
+  const eligibleSelectedTopicIds = selectedTopicIds.filter(getAssessmentEligibility);
 
   // Each batch history includes its events across every assigned module.
   const filteredHistory = useMemo(() => {
@@ -780,19 +854,16 @@ export const SyllabusTracker: React.FC = () => {
                   </span>
                 )}
 
-                <button
-                  onClick={handleSaveTopics}
-                  disabled={selectedTopicIds.length === 0 || isCurrentContextMissed}
-                  className={`px-4 py-2 text-xs font-semibold rounded-xl flex items-center gap-2 transition-all shadow-xs ${
-                    selectedTopicIds.length > 0 && !isCurrentContextMissed
-                      ? 'bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer'
-                      : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                  }`}
-                  title="Submit completed topics for this batch"
-                >
-                  <Save className="w-4 h-4" />
-                  <span>Submit Updates</span>
-                </button>
+                {eligibleSelectedTopicIds.length > 0 && !isCurrentContextMissed && (
+                  <button
+                    onClick={handleSaveTopics}
+                    className="px-4 py-2 text-xs font-semibold rounded-xl flex items-center gap-2 transition-all shadow-xs bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer"
+                    title="Submit only the selected topics that passed every student's assessment"
+                  >
+                    <Save className="w-4 h-4" />
+                    <span>Submit Updates</span>
+                  </button>
+                )}
               </div>
             </div>
 
@@ -834,64 +905,303 @@ export const SyllabusTracker: React.FC = () => {
               {filteredTopics.map((topic) => {
                 const isSavedCompleted = activeBatchCompletedTopicIds.includes(topic.id);
                 const isCurrentlySelected = selectedTopicIds.includes(topic.id);
+                const attempts = getTopicAssessments(topic.id);
+                const latestAssessment = attempts[0];
+                const isAssessmentEligible = getAssessmentEligibility(topic.id);
+                const requiresRetake = latestAssessment?.status === 'Completed' && !isAssessmentEligible;
+                const canSendAssessment = !latestAssessment || (
+                  latestAssessment.status === 'Completed' &&
+                  !isAssessmentEligible &&
+                  Boolean(latestAssessment.classAgainStartedAt)
+                );
+                const topicStatus = isSavedCompleted
+                  ? 'Completed'
+                  : latestAssessment?.classAgainStartedAt
+                    ? 'Class Being Taken Again'
+                    : isAssessmentEligible
+                      ? 'Eligible for Completion'
+                      : requiresRetake
+                        ? 'Requires Retake'
+                        : latestAssessment?.status === 'Completed'
+                          ? 'Assessment Completed'
+                          : latestAssessment?.status === 'In Progress'
+                            ? 'Assessment In Progress'
+                            : latestAssessment?.status === 'Sent'
+                              ? 'MCQ Sent'
+                              : 'Pending';
+                const topicStatusClass = topicStatus === 'Completed' || topicStatus === 'Eligible for Completion'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : topicStatus === 'Requires Retake'
+                    ? 'border-rose-200 bg-rose-50 text-rose-700'
+                    : topicStatus === 'Class Being Taken Again'
+                      ? 'border-amber-200 bg-amber-50 text-amber-700'
+                      : topicStatus === 'Assessment In Progress' || topicStatus === 'MCQ Sent'
+                        ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                        : 'border-slate-200 bg-slate-50 text-slate-600';
+                const isScorePanelOpen = expandedScoreTopicId === topic.id;
+                const selectedAssessment = attempts.find((assessment) => assessment.id === expandedAssessmentId) || attempts[0];
+                const submittedResults = selectedAssessment?.students.filter((student) => student.score !== null) || [];
+                const pendingResults = (selectedAssessment?.students.length || 0) - submittedResults.length;
+                const averagePercentage = submittedResults.length
+                  ? Math.round(submittedResults.reduce((sum, student) => sum + ((student.score || 0) / 10) * 100, 0) / submittedResults.length)
+                  : null;
+                const aboveThresholdCount = submittedResults.filter((student) => ((student.score || 0) / 10) * 100 > 75).length;
+                const atOrBelowThresholdCount = submittedResults.length - aboveThresholdCount;
+                const selectedAttemptEligible = Boolean(
+                  selectedAssessment &&
+                  selectedAssessment.status === 'Completed' &&
+                  selectedAssessment.students.length === currentBatch.students.length &&
+                  currentBatch.students.every((student) => {
+                    const result = selectedAssessment.students.find((item) => item.studentId === student.id);
+                    return result?.score !== null && result?.score !== undefined && (result.score / 10) * 100 > 75;
+                  })
+                );
+                const panelStatus = selectedAssessment?.classAgainStartedAt
+                  ? 'Class Being Taken Again'
+                  : selectedAssessment?.status === 'Sent'
+                    ? 'MCQ Sent'
+                    : selectedAssessment?.status === 'In Progress'
+                      ? 'Assessment In Progress'
+                      : selectedAssessment?.status === 'Completed'
+                        ? selectedAttemptEligible ? 'Eligible for Completion' : 'Requires Retake'
+                        : 'Pending';
+                const panelStatusClass = panelStatus === 'Eligible for Completion'
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : panelStatus === 'Requires Retake'
+                    ? 'border-rose-200 bg-rose-50 text-rose-700'
+                    : panelStatus === 'Class Being Taken Again'
+                      ? 'border-amber-200 bg-amber-50 text-amber-700'
+                      : 'border-indigo-200 bg-indigo-50 text-indigo-700';
 
                 return (
-                  <div
-                    key={topic.id}
-                    onClick={() => toggleTopicSelection(topic.id, isSavedCompleted)}
-                    className={`syllabus-topic-row p-3.5 sm:px-5 flex items-center justify-between gap-4 transition-colors ${
-                      isSavedCompleted
-                        ? 'bg-slate-50/50 cursor-default opacity-85'
-                        : isCurrentContextMissed
-                        ? 'opacity-50 cursor-not-allowed'
-                        : 'hover:bg-indigo-50/40 cursor-pointer'
-                    }`}
-                  >
-                    {/* Left: Checkbox + Topic Number + Title */}
-                    <div className="flex items-start gap-3.5 min-w-0">
-                      <div className="mt-0.5 shrink-0">
-                        {isSavedCompleted ? (
-                          <div className="w-5 h-5 rounded-md bg-emerald-600 text-white flex items-center justify-center shadow-2xs">
-                            <CheckSquare className="w-3.5 h-3.5" />
-                          </div>
-                        ) : isCurrentlySelected ? (
-                          <div className="w-5 h-5 rounded-md bg-indigo-600 text-white flex items-center justify-center shadow-2xs">
-                            <CheckSquare className="w-3.5 h-3.5" />
-                          </div>
-                        ) : (
-                          <div className="w-5 h-5 rounded-md border-2 border-slate-300 hover:border-indigo-400 bg-white" />
+                  <div key={topic.id}>
+                    <div
+                      onClick={() => toggleTopicSelection(topic.id, isSavedCompleted)}
+                      className={`syllabus-topic-row p-3.5 sm:px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
+                        isSavedCompleted
+                          ? 'bg-slate-50/50 cursor-default opacity-85'
+                          : isCurrentContextMissed
+                            ? 'opacity-50 cursor-not-allowed'
+                            : 'hover:bg-indigo-50/40 cursor-pointer'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3.5 min-w-0">
+                        <div className="mt-0.5 shrink-0">
+                          {isSavedCompleted ? (
+                            <div className="w-5 h-5 rounded-md bg-emerald-600 text-white flex items-center justify-center shadow-2xs">
+                              <CheckSquare className="w-3.5 h-3.5" />
+                            </div>
+                          ) : isCurrentlySelected ? (
+                            <div className="w-5 h-5 rounded-md bg-indigo-600 text-white flex items-center justify-center shadow-2xs">
+                              <CheckSquare className="w-3.5 h-3.5" />
+                            </div>
+                          ) : (
+                            <div className="w-5 h-5 rounded-md border-2 border-slate-300 hover:border-indigo-400 bg-white" />
+                          )}
+                        </div>
+
+                        <div className="min-w-0">
+                          <span className="text-xs font-mono-numbers text-slate-400 font-medium mr-2">
+                            {String(topic.number).padStart(2, '0')}.
+                          </span>
+                          <span className={`text-xs font-medium ${isSavedCompleted ? 'text-slate-700' : 'text-slate-900 font-semibold'}`}>
+                            {topic.title}
+                          </span>
+                          {isSavedCompleted && topic.completedDate && (
+                            <span className="ml-2 text-[11px] font-semibold text-emerald-700">
+                              Completed {formatReadableDate(topic.completedDate)}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 sm:justify-end" onClick={(event) => event.stopPropagation()}>
+                        <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${topicStatusClass}`}>
+                          {topicStatus}
+                        </span>
+                        {isCurrentlySelected && !isSavedCompleted && (
+                          <>
+                            <button
+                              type="button"
+                              disabled={!canSendAssessment || isCurrentContextMissed}
+                              onClick={() => sendSyllabusAssessment(getScheduleBatchId(currentBatch), module.id, topic.id)}
+                              className="inline-flex items-center gap-1 rounded-lg border border-indigo-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+                              title={canSendAssessment ? 'Send a fresh 10-question MCQ assessment' : 'Complete this assessment or conduct the class again before resending'}
+                            >
+                              <Send className="h-3 w-3" />
+                              {latestAssessment?.status === 'Sent'
+                                ? 'MCQ Sent'
+                                : latestAssessment?.status === 'In Progress'
+                                  ? 'Assessment In Progress'
+                                  : isAssessmentEligible
+                                    ? 'Eligible'
+                                    : latestAssessment?.classAgainStartedAt
+                                      ? 'Send Retake MCQ'
+                                      : 'Send MCQ'}
+                            </button>
+                            {attempts.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setExpandedScoreTopicId(isScorePanelOpen ? null : topic.id);
+                                  setExpandedAssessmentId(isScorePanelOpen ? null : attempts[0].id);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                              >
+                                <Eye className="h-3 w-3" />
+                                {isScorePanelOpen ? 'Hide Scores' : 'View Scores'}
+                              </button>
+                            )}
+                            {requiresRetake && (
+                              <button
+                                type="button"
+                                disabled={Boolean(latestAssessment?.classAgainStartedAt) || isCurrentContextMissed}
+                                onClick={() => conductTopicAgain(getScheduleBatchId(currentBatch), module.id, topic.id)}
+                                className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-800 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-70"
+                              >
+                                <RotateCcw className="h-3 w-3" />
+                                {latestAssessment?.classAgainStartedAt ? 'Topic Being Taken Again' : 'Conduct Class Again'}
+                              </button>
+                            )}
+                          </>
+                        )}
+                        {!isSavedCompleted && isCurrentlySelected && !isAssessmentEligible && (
+                          <span className="text-[10px] font-medium text-slate-500">Selected</span>
                         )}
                       </div>
-
-                      <div className="min-w-0">
-                        <span className="text-xs font-mono-numbers text-slate-400 font-medium mr-2">
-                          {String(topic.number).padStart(2, '0')}.
-                        </span>
-                        <span
-                          className={`text-xs font-medium ${
-                            isSavedCompleted ? 'text-slate-700' : 'text-slate-900 font-semibold'
-                          }`}
-                        >
-                          {topic.title}
-                        </span>
-                      </div>
                     </div>
 
-                    {/* Right: Saved Status & Date */}
-                    <div className="flex items-center gap-2 shrink-0">
-                      {isSavedCompleted ? (
-                        <div className="flex items-center gap-1.5 text-xs font-bold text-emerald-700 font-mono-numbers">
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                          <span>Completed ({formatReadableDate(topic.completedDate || '2026-10-20')})</span>
+                    {isScorePanelOpen && selectedAssessment && (
+                      <div className="border-t border-indigo-100 bg-indigo-50/30 p-4 sm:px-5" onClick={(event) => event.stopPropagation()}>
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <h4 className="text-sm font-bold text-slate-900">{topic.title} · Assessment Results</h4>
+                            <p className="mt-1 text-xs text-slate-500">
+                              Attempt {selectedAssessment.attempt} · Sent {formatReadableDate(selectedAssessment.sentAt.slice(0, 10))}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {attempts.slice().reverse().map((attempt) => (
+                              <button
+                                key={attempt.id}
+                                type="button"
+                                onClick={() => setExpandedAssessmentId(attempt.id)}
+                                className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold ${
+                                  selectedAssessment.id === attempt.id
+                                    ? 'border-indigo-300 bg-indigo-100 text-indigo-800'
+                                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'
+                                }`}
+                              >
+                                Attempt {attempt.attempt}
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                      ) : isCurrentlySelected ? (
-                        <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2.5 py-0.5 rounded">
-                          Selected (Unsaved)
-                        </span>
-                      ) : (
-                        <span className="text-xs text-slate-400 font-medium">Pending</span>
-                      )}
-                    </div>
+
+                        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+                          {[
+                            ['Questions', selectedAssessment.questions.length],
+                            ['Batch students', selectedAssessment.students.length],
+                            ['Submitted', submittedResults.length],
+                            ['Not submitted', pendingResults],
+                            ['Batch score', averagePercentage === null ? '—' : `${averagePercentage}%`],
+                            ['Above 75%', aboveThresholdCount],
+                            ['75% or below', atOrBelowThresholdCount]
+                          ].map(([label, value]) => (
+                            <div key={label} className="rounded-lg border border-slate-200 bg-white p-2.5">
+                              <p className="text-[10px] font-medium text-slate-500">{label}</p>
+                              <p className="mt-1 text-sm font-bold text-slate-900">{value}</p>
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap gap-1.5">
+                            <span className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold ${
+                              selectedAssessment.status === 'Completed'
+                                ? selectedAttemptEligible
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                  : 'border-rose-200 bg-rose-50 text-rose-700'
+                                : panelStatusClass
+                            }`}>
+                              {selectedAssessment.status === 'Completed' ? 'Assessment Completed' : panelStatus}
+                            </span>
+                            {selectedAssessment.status === 'Completed' && (
+                              <span className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold ${panelStatusClass}`}>
+                                {panelStatus}
+                              </span>
+                            )}
+                          </div>
+                          {selectedAssessment.status !== 'Completed' && (
+                            <button
+                              type="button"
+                              onClick={() => simulateSyllabusAssessmentResponses(selectedAssessment.id)}
+                              className="rounded-lg bg-indigo-600 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-indigo-700"
+                            >
+                              {submittedResults.length === 0 ? 'Simulate LMS Responses' : 'Complete Remaining Submissions'}
+                            </button>
+                          )}
+                        </div>
+
+                        <details className="mt-3 rounded-lg border border-slate-200 bg-white">
+                          <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-slate-700">
+                            View the 10 MCQ questions
+                          </summary>
+                          <ol className="list-decimal space-y-2 border-t border-slate-100 px-8 py-3 text-xs text-slate-700">
+                            {selectedAssessment.questions.map((question, index) => (
+                              <li key={`${selectedAssessment.id}-question-${index}`}>
+                                <p className="font-semibold">{question.question}</p>
+                                <p className="mt-1 text-slate-500">{question.options.join(' · ')}</p>
+                              </li>
+                            ))}
+                          </ol>
+                        </details>
+
+                        <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                          <table className="w-full min-w-[560px] text-left text-xs">
+                            <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                              <tr>
+                                <th className="px-3 py-2.5">Student</th>
+                                <th className="px-3 py-2.5">Score</th>
+                                <th className="px-3 py-2.5">Percentage</th>
+                                <th className="px-3 py-2.5">Result</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {selectedAssessment.students.map((student) => {
+                                const percentage = student.score === null ? null : (student.score / 10) * 100;
+                                const passed = percentage !== null && percentage > 75;
+                                return (
+                                  <tr key={student.studentId}>
+                                    <td className="px-3 py-2.5 font-medium text-slate-800">{student.studentName}</td>
+                                    <td className="px-3 py-2.5 text-slate-700">{student.score === null ? '—' : `${student.score}/10`}</td>
+                                    <td className={`px-3 py-2.5 font-semibold ${percentage === null ? 'text-slate-400' : passed ? 'text-emerald-700' : 'text-rose-700'}`}>
+                                      {percentage === null ? '—' : `${percentage}%`}
+                                    </td>
+                                    <td className="px-3 py-2.5">
+                                      <span className={`rounded-md px-2 py-1 text-[10px] font-semibold ${
+                                        percentage === null
+                                          ? 'bg-slate-100 text-slate-500'
+                                          : passed
+                                            ? 'bg-emerald-50 text-emerald-700'
+                                            : 'bg-rose-50 text-rose-700'
+                                      }`}>
+                                        {percentage === null ? 'Pending' : passed ? 'Passed' : 'Below Threshold'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                        {selectedAssessment.status === 'Completed' && !selectedAttemptEligible && (
+                          <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
+                            Every student must submit and score above 75%. This topic cannot be submitted as completed.
+                          </p>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1014,7 +1324,7 @@ export const SyllabusTracker: React.FC = () => {
 
             {filteredHistory.length === 0 ? (
               <div className="p-8 text-center text-slate-500 text-xs">
-                No syllabus events logged for this batch yet. Check off covered topics above and click "Submit Updates" to record activity.
+                No syllabus events logged for this batch yet. Select a topic, send its MCQ assessment, and submit it after every student scores above 75%.
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -1024,7 +1334,7 @@ export const SyllabusTracker: React.FC = () => {
                       <th className="py-2.5 px-4">Event Date</th>
                       <th className="py-2.5 px-3">Event Type</th>
                       <th className="py-2.5 px-4">Details / Topic / Batch</th>
-                      <th className="py-2.5 px-3">Reason (if missed)</th>
+                      <th className="py-2.5 px-3">Reason / Activity Details</th>
                       <th className="py-2.5 px-3 text-right">Status</th>
                     </tr>
                   </thead>
@@ -1035,17 +1345,24 @@ export const SyllabusTracker: React.FC = () => {
                           {formatReadableDate(event.displayDate)}
                         </td>
                         <td className="py-2.5 px-3 whitespace-nowrap">
-                          {event.eventType === 'Topic Completed' ? (
-                            <span className="inline-flex items-center gap-1 font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 text-xs">
-                              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                              <span>Topic Completed</span>
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 font-semibold text-rose-700 bg-rose-50 px-2 py-0.5 rounded border border-rose-200 text-xs">
-                              <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-                              <span>Class Not Conducted</span>
-                            </span>
-                          )}
+                          <span className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-semibold ${
+                            event.eventType === 'Topic Completed'
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : event.eventType === 'Topic Requires Retake' || event.eventType === 'Class Not Conducted'
+                                ? 'border-rose-200 bg-rose-50 text-rose-700'
+                                : event.eventType === 'Topic Being Taken Again'
+                                  ? 'border-amber-200 bg-amber-50 text-amber-700'
+                                  : 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                          }`}>
+                            {event.eventType === 'Topic Completed'
+                              ? <CheckCircle2 className="h-3.5 w-3.5" />
+                              : event.eventType === 'Class Not Conducted' || event.eventType === 'Topic Requires Retake'
+                                ? <AlertTriangle className="h-3.5 w-3.5" />
+                                : event.eventType === 'Topic Being Taken Again'
+                                  ? <RotateCcw className="h-3.5 w-3.5" />
+                                  : <BookOpen className="h-3.5 w-3.5" />}
+                            <span>{event.eventType === 'Topic Completed' ? 'Syllabus Topic Completed and Submitted to Admin' : event.eventType}</span>
+                          </span>
                         </td>
                         <td className="py-2.5 px-4 text-slate-900 font-medium">
                           <div>
@@ -1077,7 +1394,7 @@ export const SyllabusTracker: React.FC = () => {
                           </div>
                         </td>
                         <td className="py-2.5 px-3 text-slate-600 italic">
-                          {event.reason ? `"${event.reason}"` : '—'}
+                          {event.details || event.reason ? `"${event.details || event.reason}"` : '—'}
                         </td>
                         <td className="py-2.5 px-3 text-right font-mono-numbers">
                           <span className="text-[11px] font-semibold text-emerald-600 bg-emerald-50/80 px-2 py-0.5 rounded">
