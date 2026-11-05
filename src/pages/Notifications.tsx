@@ -50,7 +50,8 @@ export const Notifications: React.FC = () => {
               { value: 'ALL', label: 'All Categories' },
               { value: 'syllabus_overdue', label: 'Syllabus Overdue Reminders' },
               { value: 'schedule_approval', label: 'Schedule Approval Notices' },
-              { value: 'examination', label: 'Examination Updates' }
+              { value: 'examination', label: 'Examination Updates' },
+              { value: 'system', label: 'System and Finance Handoffs' }
             ]}
             ariaLabel="Filter notification category"
             size="compact"
@@ -80,6 +81,8 @@ export const Notifications: React.FC = () => {
             const isOverdue = item.category === 'syllabus_overdue';
             const isApproval = item.category === 'schedule_approval';
             const isExamination = item.category === 'examination';
+            const isFinanceSubmission = item.targetRole === 'Finance Department';
+            const isAdminHandoff = item.targetRole === 'Admin';
 
             return (
               <div
@@ -91,6 +94,8 @@ export const Notifications: React.FC = () => {
                     ? 'bg-white border-rose-200 shadow-2xs hover:border-rose-300'
                     : isExamination
                     ? 'bg-white border-indigo-200 shadow-2xs hover:border-indigo-300'
+                    : isFinanceSubmission
+                    ? 'bg-white border-rose-200 shadow-2xs hover:border-rose-300'
                     : 'bg-white border-amber-200 shadow-2xs hover:border-amber-300'
                 }`}
               >
@@ -105,6 +110,8 @@ export const Notifications: React.FC = () => {
                           ? 'bg-rose-50 text-rose-600'
                           : isExamination
                           ? 'bg-indigo-50 text-indigo-600'
+                          : isFinanceSubmission
+                          ? 'bg-rose-50 text-rose-800'
                           : 'bg-amber-50 text-amber-600'
                       }`}
                     >
@@ -125,10 +132,12 @@ export const Notifications: React.FC = () => {
                               ? 'text-slate-500'
                               : isOverdue
                               ? 'text-rose-600'
+                              : isFinanceSubmission
+                              ? 'text-rose-800'
                               : 'text-amber-600'
                           }`}
                         >
-                          {isOverdue ? 'Overdue Reminder' : isExamination ? 'Examination Update' : 'Approval Request'}
+                          {isFinanceSubmission ? 'Finance Department · Mock Handoff' : isAdminHandoff ? 'Admin · Mock Handoff' : isOverdue ? 'Overdue Reminder' : isExamination ? 'Examination Update · Mock' : 'Approval Request'}
                         </span>
                         <span className="text-slate-300">·</span>
                         <span className="text-xs text-slate-400 font-mono-numbers">
@@ -165,7 +174,9 @@ export const Notifications: React.FC = () => {
                             } else if (isApproval) {
                               navigate('/schedule');
                             } else if (isExamination && item.relatedRequestId) {
-                              navigate(`/examinations?request=${encodeURIComponent(item.relatedRequestId)}`);
+                              navigate(`/examinations?exam=${encodeURIComponent(item.relatedRequestId)}`);
+                            } else if (isFinanceSubmission && item.sessionId) {
+                              navigate(`/syllabus?session=${encodeURIComponent(item.sessionId)}`);
                             }
                           }}
                           className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg flex items-center gap-1.5 shadow-2xs transition-colors ${
@@ -173,6 +184,8 @@ export const Notifications: React.FC = () => {
                               ? 'bg-rose-600 hover:bg-rose-700 text-white'
                               : isExamination
                               ? 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                              : isFinanceSubmission
+                              ? 'bg-rose-900 hover:bg-rose-800 text-white'
                               : 'bg-amber-600 hover:bg-amber-700 text-white'
                           }`}
                         >
@@ -191,7 +204,7 @@ export const Notifications: React.FC = () => {
                       <>
                         {isExamination && item.relatedRequestId && (
                           <button
-                            onClick={() => navigate(`/examinations?request=${encodeURIComponent(item.relatedRequestId || '')}`)}
+                            onClick={() => navigate(`/examinations?exam=${encodeURIComponent(item.relatedRequestId || '')}`)}
                             className="rounded-lg border border-indigo-200 bg-white px-3 py-1.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-50"
                           >
                             View Examination

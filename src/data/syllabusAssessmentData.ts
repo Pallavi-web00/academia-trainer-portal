@@ -160,18 +160,33 @@ export function getInitialSyllabusAssessments(
             ['top-2-06', passedScores],
             ['top-2-07', retakeScores, true]
           ]
-        : [
-            ['top-2-11', []],
-            ['top-2-12', [8, 9, 7]],
-            ['top-2-13', failedScores],
-            ['top-2-14', passedScores],
-            ['top-2-15', retakeScores, true]
-          ];
+        : module.topics.map((topic) => [topic.id, passedScores]);
       return cases.map(([topicId, scores, classAgainStarted]) =>
         createAssessment(schedule, topicId, 1, scores, classAgainStarted)
       );
     })
     .filter((assessment): assessment is SyllabusAssessment => assessment !== undefined);
+}
+
+export function mergeInitialSyllabusAssessments(
+  savedAssessments: SyllabusAssessment[],
+  initialAssessments: SyllabusAssessment[]
+): SyllabusAssessment[] {
+  const sampleDailyAssessments = initialAssessments.filter(
+    (assessment) => assessment.batchId === 'batch-daily'
+  );
+  const sampleDailyIds = new Set(sampleDailyAssessments.map((assessment) => assessment.id));
+  const savedById = new Map(
+    savedAssessments
+      .filter((assessment) => !sampleDailyIds.has(assessment.id))
+      .map((assessment) => [assessment.id, assessment])
+  );
+  initialAssessments.forEach((assessment) => {
+    if (assessment.batchId === 'batch-daily' || !savedById.has(assessment.id)) {
+      savedById.set(assessment.id, assessment);
+    }
+  });
+  return [...savedById.values()];
 }
 
 export function getInitialAssessmentActivityEvents(

@@ -8,6 +8,7 @@ import {
 import { initialModulesData } from './modulesData';
 import {
   findScheduleConflicts,
+  getScheduleBatchId,
   parseTimeToMinutes,
   validateTrainerWorkingSchedule
 } from '../utils/dateTimeUtils';
@@ -71,13 +72,13 @@ export const additionalStudentGroups: Student[][] = [
 ];
 
 const seededHistoryByBatch: Record<string, { topicIds: string[]; missedReason?: string }> = {
-  'batch-mwf': { topicIds: ['top-2-01', 'top-2-02'] },
+  'batch-mwf': { topicIds: ['top-2-01', 'top-2-02', 'top-2-06'] },
   'batch-tts': {
     topicIds: ['top-2-03', 'top-2-04'],
     missedReason: 'A campus network maintenance window prevented the scheduled class.'
   },
   'batch-daily': {
-    topicIds: ['top-2-05', 'top-2-06'],
+    topicIds: initialModulesData[0].topics.map((topic) => topic.id),
     missedReason: 'The instructor was assigned to an institutional assessment.'
   },
   'batch-mwf-afternoon': { topicIds: ['top-2-07', 'top-2-08'] },
@@ -339,7 +340,11 @@ function getSeedActivityEvents(
     const seed = seededHistoryByBatch[schedule.id];
     if (!seed || pastSessions.length < 3) return;
 
-    const topicSessions = [pastSessions[pastSessions.length - 10], pastSessions[pastSessions.length - 5]];
+    const topicSessions = seed.topicIds.map((_, index) =>
+      schedule.id === 'batch-daily'
+        ? pastSessions[pastSessions.length - seed.topicIds.length - 2 + index]
+        : pastSessions[pastSessions.length - (10 - index * 3)]
+    );
     seed.topicIds.forEach((topicId, index) => {
       const session = topicSessions[index];
       const topic = assignedModule.topics.find((item) => item.id === topicId);
@@ -428,6 +433,35 @@ export function getInitialActivityEvents(
   const sessions = generateScheduledSessions(schedules);
   const events = getSeedActivityEvents(schedules, sessions);
   validateSyllabusHistoryData(schedules, sessions, events);
+  const completedDailySchedule = schedules.find((schedule) => {
+    const plannedTopics = initialModulesData
+      .find((module) => module.id === schedule.moduleId)
+      ?.topics.map((topic) => topic.id);
+    return schedule.id === 'batch-daily' &&
+      Boolean(plannedTopics?.length) &&
+      plannedTopics?.every((topicId) => schedule.completedTopicIds?.includes(topicId));
+  });
+  const lastDailyCompletion = events
+    .filter((event) =>
+      event.batchId === (completedDailySchedule?.batchId || completedDailySchedule?.id) &&
+      event.eventType === 'Topic Completed'
+    )
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp))[0];
+  if (completedDailySchedule && lastDailyCompletion) {
+    events.push({
+      id: 'act-module-finance-submission-batch-daily-mod-2',
+      timestamp: '2026-11-05T04:30:00.000Z',
+      displayDate: '2026-11-05',
+      batchId: getScheduleBatchId(completedDailySchedule),
+      batchName: completedDailySchedule.batch,
+      moduleId: completedDailySchedule.moduleId,
+      moduleName: completedDailySchedule.moduleName,
+      trainerId: 'SA101',
+      eventType: 'Module Submitted for Finance Verification',
+      details: 'Sample submission by trainer SA101. Pending Finance Department verification; no actual verification is represented.',
+      savedStatus: 'Saved'
+    });
+  }
   return events;
 }
 

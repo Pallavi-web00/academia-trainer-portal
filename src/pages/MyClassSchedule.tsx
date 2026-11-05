@@ -140,7 +140,7 @@ export const MyClassSchedule: React.FC = () => {
   );
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-2">
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -192,7 +192,7 @@ export const MyClassSchedule: React.FC = () => {
         <div>
           <span className="font-semibold">Schedule Approval & Syllabus Tracker Integration:</span>
           <p className="mt-0.5 text-indigo-800 leading-relaxed">
-            Only after the trainer approves a batch schedule here does that batch become visible in the <strong>Syllabus Tracker</strong>. Once approved, the trainer can update completed syllabus topics, and those updates are reflected directly in this table.
+            Only after the trainer approves a batch schedule here does that batch become visible in the <strong>Syllabus Tracker</strong>. Topic completion is recorded automatically when every student in that batch completes the topic MCQ assessment with a score above 75%, and the updated syllabus progress is reflected directly in this table.
           </p>
         </div>
       </div>

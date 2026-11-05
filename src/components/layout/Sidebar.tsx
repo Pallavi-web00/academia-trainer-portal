@@ -4,11 +4,13 @@ import {
   LayoutDashboard,
   CalendarDays,
   BookOpenCheck,
+  FileText,
   Bell,
   GraduationCap,
   X,
   ClipboardList,
-  ClipboardCheck
+  ClipboardCheck,
+  ClipboardClock
 } from 'lucide-react';
 import { useTrainer } from '../../context/TrainerContext';
 
@@ -88,6 +90,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
     { name: 'My Class Schedule', path: '/schedule', icon: CalendarDays },
     { name: 'Syllabus Tracker', path: '/syllabus', icon: BookOpenCheck },
+    { name: 'Notes Management', path: '/notes', icon: FileText },
+    { name: 'Attendance', path: '/attendance', icon: ClipboardClock },
     { name: 'Examination', path: '/examinations', icon: ClipboardCheck },
     {
       name: 'Notifications',

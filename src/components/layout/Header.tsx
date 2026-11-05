@@ -17,6 +17,10 @@ export const Header: React.FC<HeaderProps> = ({
   const location = useLocation();
 
   const getPageTitle = (pathname: string): { title: string; subtitle: string } => {
+    if (pathname.startsWith('/notes/')) {
+      return { title: 'Notes Management', subtitle: 'Prepare and manage notes for assigned module topics' };
+    }
+
     switch (pathname) {
       case '/':
         return { title: 'Dashboard Overview', subtitle: "Monitor today's sessions and pending syllabus actions" };
@@ -24,12 +28,16 @@ export const Header: React.FC<HeaderProps> = ({
         return { title: 'My Class Schedule', subtitle: 'Review assigned teaching schedules and request changes' };
       case '/syllabus':
         return { title: 'Syllabus Tracker', subtitle: 'Record topic completions and session outcome logs' };
+      case '/notes':
+        return { title: 'Notes Management', subtitle: 'Prepare and manage notes for assigned module topics' };
+      case '/attendance':
+        return { title: 'Attendance', subtitle: 'Review batch-wise biometric attendance records' };
       case '/history':
         return { title: 'Session History', subtitle: 'Archive of conducted and documented academic sessions' };
       case '/notifications':
         return { title: 'Notifications & Reminders', subtitle: 'Syllabus overdue alerts and schedule actions' };
       case '/examinations':
-        return { title: 'Examination Management', subtitle: 'Submit requests and review examination decisions' };
+        return { title: 'Examinations', subtitle: 'Review Admin schedules and submit examination marks' };
       case '/profile':
         return { title: 'Trainer Profile', subtitle: 'Faculty credentials, assigned batches, and mock configuration' };
       default:

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { TrainerProvider, useTrainer } from './context/TrainerContext';
 import { Sidebar } from './components/layout/Sidebar';
@@ -11,12 +11,18 @@ import { SessionHistory } from './pages/SessionHistory';
 import { Notifications } from './pages/Notifications';
 import { Profile } from './pages/Profile';
 import { Examinations } from './pages/Examinations';
+import { Attendance } from './pages/Attendance';
+import { NotesManagement } from './pages/NotesManagement';
 
 const AppLayout: React.FC = () => {
   // The rolled-mat navigation starts closed on every page load.
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const { toasts, removeToast } = useTrainer();
   const location = useLocation();
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+  }, [location.pathname]);
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col">
@@ -39,6 +45,9 @@ const AppLayout: React.FC = () => {
               <Route path="/" element={<Dashboard />} />
               <Route path="/schedule" element={<MyClassSchedule />} />
               <Route path="/syllabus" element={<SyllabusTracker />} />
+              <Route path="/notes" element={<NotesManagement />} />
+              <Route path="/notes/:moduleId" element={<NotesManagement />} />
+              <Route path="/attendance" element={<Attendance />} />
               <Route path="/history" element={<SessionHistory />} />
               <Route path="/notifications" element={<Notifications />} />
               <Route path="/examinations" element={<Examinations />} />

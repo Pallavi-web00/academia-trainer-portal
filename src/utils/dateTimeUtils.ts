@@ -1,4 +1,4 @@
-import { AdminTask, ScheduleItem, SyllabusActivityEvent } from '../types';
+import { AdminTask, ScheduleItem, SyllabusActivityEvent, TrainerProfile } from '../types';
 
 /**
  * Utility functions for academic dates, timings, and time comparison.
@@ -87,6 +87,14 @@ export type TodaysSyllabusStatus =
 
 export function getScheduleBatchId(schedule: ScheduleItem): string {
   return schedule.batchId || schedule.id;
+}
+
+export function isScheduleAssignedToTrainer(
+  schedule: ScheduleItem,
+  trainer: TrainerProfile
+): boolean {
+  return trainer.assignedBatches.includes(schedule.batch) ||
+    trainer.assignedBatches.includes(`${schedule.batch} (${schedule.startTime} - ${schedule.endTime})`);
 }
 
 export function hasSavedOutcomeForSessionOnDate(

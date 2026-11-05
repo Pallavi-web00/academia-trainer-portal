@@ -10,6 +10,20 @@ export interface Student {
   email: string;
 }
 
+export type AttendanceStatus = 'Present' | 'Absent' | 'Late' | 'Holiday';
+
+export interface AttendanceRecord {
+  id: string;
+  studentId: string;
+  batchId: string;
+  attendanceDate: string;
+  status: AttendanceStatus;
+  checkInTime?: string;
+  checkOutTime?: string;
+  source: 'Biometric' | 'Authorized Admin Correction';
+  lastSynchronizedAt?: string;
+}
+
 export interface SyllabusTopic {
   id: string;
   number: number;
@@ -71,6 +85,7 @@ export interface SyllabusActivityEvent {
   timestamp: string; // ISO date-time string
   displayDate: string;
   batchId: string;
+  batchName?: string;
   moduleId: string;
   moduleName: string;
   eventType:
@@ -79,18 +94,54 @@ export interface SyllabusActivityEvent {
     | 'MCQ Assessment Sent'
     | 'MCQ Assessment Completed'
     | 'Topic Requires Retake'
-    | 'Topic Being Taken Again';
+    | 'Topic Being Taken Again'
+    | 'Topic Notes Uploaded'
+    | 'Topic Notes Updated'
+    | 'Topic Notes Released'
+    | 'Module Submitted for Finance Verification';
   scheduledDate?: string;
   topicId?: string;
   topicName?: string;
   topicNumber?: number;
   assessmentId?: string;
+  assessmentCompletionStatus?: SyllabusAssessmentStatus;
+  finalAssessmentResult?: string;
+  trainerId?: string;
+  relatedCompletionEventId?: string;
   details?: string;
   sessionId?: string;
   sessionIdentifier?: string; // e.g. "Session 12 (09:00 AM - 10:00 AM)"
   reason?: string;
   savedStatus: 'Saved' | 'Pending';
 }
+
+export interface TopicNotesMetadata {
+  id: string;
+  trainerId: string;
+  moduleId: string;
+  topicId: string;
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+  storageReference: string;
+  version: number;
+  uploadedAt: string;
+  lastUpdatedAt: string;
+}
+
+export interface TopicNotesRelease {
+  id: string;
+  batchId: string;
+  moduleId: string;
+  topicId: string;
+  notesId: string;
+  notesVersion: number;
+  assessmentCompletionStatus: 'Completed';
+  availabilityStatus: 'Notes Uploaded';
+  releasedAt: string;
+}
+
+export type TopicNotesAvailabilityStatus = 'Notes Locked' | 'Notes Pending' | 'Notes Uploaded';
 
 export interface SyllabusAssessmentQuestion {
   question: string;
@@ -134,12 +185,18 @@ export interface NotificationItem {
   dateContext?: string;
   actionLabel?: string;
   relatedRequestId?: string;
+  targetRole?: 'Finance Department' | 'Admin';
 }
 
-export type ExaminationType = 'Theory' | 'Practical' | 'Assessment';
-export type ExaminationMode = 'Offline' | 'Online';
-export type ExaminationRequestStatus = 'Pending Admin Review' | 'Approved' | 'Rejected';
-export type ExaminationEventStatus = 'Upcoming' | 'Ongoing' | 'Completed' | 'Cancelled';
+export type ExaminationComponentType = 'Theory' | 'Practical' | 'Project';
+
+export interface AdminExaminationComponent {
+  scheduledDate: string;
+  scheduledTime: string;
+  endTime?: string;
+  maxMarks?: number;
+  details?: string;
+}
 
 export interface ExaminationEligibleStudent {
   studentId: string;
@@ -148,46 +205,51 @@ export interface ExaminationEligibleStudent {
   eligibilityRemarks?: string;
 }
 
-export interface ExaminationRequest {
+export interface AdminExaminationScheduleUpdate {
   id: string;
-  title: string;
+  component: ExaminationComponentType;
+  previousDate: string;
+  previousTime: string;
+  updatedDate: string;
+  updatedTime: string;
+  timestamp: string;
+  details?: string;
+}
+
+export interface AdminExamination {
+  id: string;
   batchId: string;
   batchName: string;
   moduleId: string;
   moduleName: string;
-  type: ExaminationType;
-  proposedDate: string;
-  proposedStartTime: string;
-  proposedEndTime: string;
-  topicIds: string[];
-  topicNames: string[];
-  mode: ExaminationMode;
-  venueDetails: string;
-  adminInstructions: string;
-  submittedAt: string;
-  requestStatus: ExaminationRequestStatus;
-  eventStatus: ExaminationEventStatus;
-  originalRequestId?: string;
-  revisionNumber?: number;
-  decisionDate?: string;
-  adminRemarks?: string;
-  rejectionReason?: string;
-  approvedDate?: string;
-  approvedStartTime?: string;
-  approvedEndTime?: string;
-  eligibleStudents?: ExaminationEligibleStudent[];
-  eligibilityRemarks?: string;
-  completedAt?: string;
-  cancellationReason?: string;
-  scheduleChange?: {
-    proposedDate: string;
-    proposedStartTime: string;
-    proposedEndTime: string;
-    status: 'Pending Admin Review' | 'Confirmed';
-    submittedAt: string;
-    decisionDate?: string;
-    adminRemarks?: string;
-  };
+  components: Partial<Record<ExaminationComponentType, AdminExaminationComponent>>;
+  eligibleStudents: ExaminationEligibleStudent[];
+  publishedAt: string;
+  status: 'Admin Published';
+  publishedBy: string;
+  scheduleUpdates: AdminExaminationScheduleUpdate[];
+  adminDetails?: string;
+}
+
+export interface ExaminationStudentMarks {
+  studentId: string;
+  theory: number | null;
+  practical: number | null;
+  project: number | null;
+}
+
+export type ExaminationMarksStatus = 'Draft' | 'Submitted';
+
+export interface ExaminationMarksRecord {
+  id: string;
+  examinationId: string;
+  batchId: string;
+  moduleId: string;
+  trainerId: string;
+  studentMarks: ExaminationStudentMarks[];
+  status: ExaminationMarksStatus;
+  savedAt?: string;
+  submittedAt?: string;
 }
 
 export interface TrainerProfile {

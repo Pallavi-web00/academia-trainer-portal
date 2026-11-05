@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useMemo, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef, ReactNode } from 'react';
 import {
   ModuleData,
   ScheduleItem,
@@ -10,10 +10,16 @@ import {
   AdminTaskStatus,
   FreeHourSlot,
   ScheduledSyllabusSession,
-  ExaminationRequest,
-  SyllabusAssessment
+  AdminExamination,
+  ExaminationMarksRecord,
+  ExaminationStudentMarks,
+  SyllabusAssessment,
+  TopicNotesAvailabilityStatus,
+  TopicNotesMetadata,
+  TopicNotesRelease
 } from '../types';
 import { initialModulesData } from '../data/modulesData';
+import { getInitialTopicNotes } from '../data/topicNotesData';
 import {
   getInitialSchedules,
   getInitialActivityEvents,
@@ -29,15 +35,46 @@ import {
   parseTimeToMinutes,
   isBatchScheduledOnDate,
   getPendingTodaySessions,
-  getScheduleBatchId
+  getScheduleBatchId,
+  isScheduleAssignedToTrainer
 } from '../utils/dateTimeUtils';
 import { generateReminders } from '../utils/reminderLogic';
-import { getExaminationNotifications, getInitialExaminationRequests } from '../data/examinationData';
+import {
+  areAllStudentsAssessmentQualified,
+  getQualifyingAssessmentResults,
+  hasModuleFinanceSubmission,
+  hasSavedTopicCompletion,
+  isModuleReadyForFinanceVerification
+} from '../utils/syllabusAssessment';
+import { createFinanceModuleSubmissionNotification } from '../utils/financeNotifications';
+import {
+  createAdminMarksSubmittedNotification,
+  getAdminExaminationNotifications,
+  getInitialAdminExaminations,
+  getPublishedAdminExaminations
+} from '../data/examinationData';
 import {
   createSyllabusAssessmentQuestions,
   getInitialAssessmentActivityEvents,
-  getInitialSyllabusAssessments
+  getInitialSyllabusAssessments,
+  mergeInitialSyllabusAssessments
 } from '../data/syllabusAssessmentData';
+import {
+  clearAllTopicNotes,
+  createTopicNotesId,
+  createTopicNotesReleaseId,
+  getAllTopicNotes,
+  getTopicNotesFileValidationError,
+  getTopicNotesFile,
+  MAX_TOPIC_NOTES_FILE_SIZE_BYTES,
+  saveTopicNotes
+} from '../utils/topicNotesStorage';
+import {
+  getMarksValidationError,
+  isExaminationMarksEntryOpen,
+  sanitizePersistedExaminationMarks
+} from '../utils/examinationMarks';
+import { getTopicNotesAvailabilityStatus } from '../utils/topicNotesAvailability';
 
 interface TrainerContextType {
   trainer: TrainerProfile;
@@ -52,8 +89,12 @@ interface TrainerContextType {
   freeHourSlots: FreeHourSlot[];
   activityHistory: SyllabusActivityEvent[];
   notifications: NotificationItem[];
-  examinationRequests: ExaminationRequest[];
+  examinations: AdminExamination[];
+  examinationMarks: ExaminationMarksRecord[];
   syllabusAssessments: SyllabusAssessment[];
+  topicNotes: TopicNotesMetadata[];
+  topicNotesReleases: TopicNotesRelease[];
+  topicNotesLoaded: boolean;
   activeRemindersCount: number;
   pendingApprovalsCount: number;
   todayClassesCount: number;
@@ -64,15 +105,21 @@ interface TrainerContextType {
   removeToast: (id: string) => void;
   approveSchedule: (scheduleId: string) => void;
   requestScheduleChange: (scheduleId: string, reason: string) => boolean;
-  submitSyllabusUpdates: (
-    moduleId: string,
-    topicIds: string[],
-    sessionContextId: string,
-    scheduledDate?: string
-  ) => boolean;
+  submitModuleForFinanceVerification: (batchId: string, moduleId: string) => boolean;
   sendSyllabusAssessment: (batchId: string, moduleId: string, topicId: string) => SyllabusAssessment | undefined;
   simulateSyllabusAssessmentResponses: (assessmentId: string) => void;
   conductTopicAgain: (batchId: string, moduleId: string, topicId: string) => boolean;
+  uploadTopicNotes: (
+    file: File,
+    moduleId: string,
+    topicId: string
+  ) => Promise<boolean>;
+  getTopicNotesAvailability: (
+    batchId: string,
+    moduleId: string,
+    topicId: string
+  ) => { status: TopicNotesAvailabilityStatus; notes?: TopicNotesMetadata };
+  downloadTopicNotes: (notes: TopicNotesMetadata, batchId: string) => Promise<boolean>;
   recordClassNotConducted: (payload: {
     moduleId: string;
     scheduledDate: string;
@@ -81,10 +128,8 @@ interface TrainerContextType {
   }) => { success: boolean; message?: string };
   updateAdminTaskStatus: (taskId: string, status: AdminTaskStatus, notes?: string) => void;
   resolveNotification: (notificationId: string) => void;
-  submitExaminationRequest: (
-    request: Omit<ExaminationRequest,
-      'id' | 'submittedAt' | 'requestStatus' | 'eventStatus' | 'batchName' | 'moduleName' | 'topicNames'>
-  ) => ExaminationRequest | undefined;
+  saveExaminationMarks: (examinationId: string, studentMarks: ExaminationStudentMarks[]) => boolean;
+  submitExaminationMarks: (examinationId: string, studentMarks: ExaminationStudentMarks[]) => boolean;
   resetAllMockData: () => void;
 }
 
@@ -97,13 +142,17 @@ const STORAGE_KEYS = {
   ACTIVITY: 'academia_trainer_activity_v10',
   ADMIN_TASKS: 'academia_trainer_admin_tasks_v6',
   RESOLVED_NOTIFS: 'academia_trainer_resolved_notifs_v10',
-  EXAMINATIONS: 'academia_trainer_examination_requests_v1',
-  ASSESSMENTS: 'academia_trainer_syllabus_assessments_v1'
+  EXAMINATIONS: 'academia_trainer_admin_examinations_v1',
+  EXAMINATION_MARKS: 'academia_trainer_examination_marks_v1',
+  ASSESSMENTS: 'academia_trainer_syllabus_assessments_v1',
+  NOTES_RELEASES: 'academia_trainer_topic_notes_releases_v1'
 };
 
 export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [trainer] = useState<TrainerProfile>(trainerProfile);
   const [currentTime, setCurrentTime] = useState(() => new Date());
+  const moduleFinanceSubmissionLocks = useRef(new Set<string>());
+  const examinationMarksLocks = useRef(new Set<string>());
 
   useEffect(() => {
     const timerId = window.setInterval(() => setCurrentTime(new Date()), 30_000);
@@ -133,37 +182,95 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
       if (!saved) return getInitialSchedules();
 
       const parsed: ScheduleItem[] = JSON.parse(saved);
-      const initialDaysById = new Map(
-        getInitialSchedules().map((schedule) => [schedule.id, schedule.scheduledDays])
+      const initialSchedules = getInitialSchedules();
+      const initialById = new Map(
+        initialSchedules.map((schedule) => [schedule.id, schedule])
       );
-      return parsed.map((schedule) => ({
-        ...schedule,
-        scheduledDays: initialDaysById.get(schedule.id) ?? schedule.scheduledDays
-      }));
+      return parsed.map((schedule) => {
+        const initial = initialById.get(schedule.id);
+        const seedCompletedTopics = schedule.id === 'batch-daily' &&
+          schedule.moduleId === initial?.moduleId
+          ? initial.completedTopicIds || []
+          : [];
+        return {
+          ...schedule,
+          scheduledDays: initial?.scheduledDays ?? schedule.scheduledDays,
+          completedTopicIds: [...new Set([...(schedule.completedTopicIds || []), ...seedCompletedTopics])]
+        };
+      });
     } catch {
       return getInitialSchedules();
     }
   });
 
   const [syllabusAssessments, setSyllabusAssessments] = useState<SyllabusAssessment[]>(() => {
+    const initialAssessments = getInitialSyllabusAssessments(schedules, initialModulesData[0]);
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.ASSESSMENTS);
       return saved
-        ? JSON.parse(saved) as SyllabusAssessment[]
-        : getInitialSyllabusAssessments(schedules, initialModulesData[0]);
+        ? mergeInitialSyllabusAssessments(
+            JSON.parse(saved) as SyllabusAssessment[],
+            initialAssessments
+          )
+        : initialAssessments;
     } catch {
-      return getInitialSyllabusAssessments(schedules, initialModulesData[0]);
+      return initialAssessments;
     }
   });
 
-  const [examinationRequests, setExaminationRequests] = useState<ExaminationRequest[]>(() => {
+  const [examinations, setExaminations] = useState<AdminExamination[]>(() => {
+    const initialExaminations = getInitialAdminExaminations(schedules);
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.EXAMINATIONS);
-      return saved ? JSON.parse(saved) as ExaminationRequest[] : getInitialExaminationRequests(schedules);
+      if (!saved) return initialExaminations;
+      const savedExaminations = JSON.parse(saved) as AdminExamination[];
+      const savedById = new Map(savedExaminations.map((examination) => [examination.id, examination]));
+      const initialIds = new Set(initialExaminations.map((examination) => examination.id));
+      return [
+        ...initialExaminations.map((examination) => {
+          const savedExamination = savedById.get(examination.id);
+          if (!savedExamination) return examination;
+          if (examination.id === 'ADM-EXAM-DAILY-MOD2-2026') {
+            return { ...examination, scheduleUpdates: savedExamination.scheduleUpdates || [] };
+          }
+          return savedExamination;
+        }),
+        ...savedExaminations.filter((examination) => !initialIds.has(examination.id))
+      ];
     } catch {
-      return getInitialExaminationRequests(schedules);
+      return initialExaminations;
     }
   });
+  const [examinationMarks, setExaminationMarks] = useState<ExaminationMarksRecord[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.EXAMINATION_MARKS);
+      return saved
+        ? sanitizePersistedExaminationMarks(
+            examinations,
+            JSON.parse(saved) as ExaminationMarksRecord[],
+            currentTime
+          )
+        : [];
+    } catch {
+      return [];
+    }
+  });
+  const submittedExaminationIds = useRef(new Set(
+    examinationMarks
+      .filter((record) => record.status === 'Submitted')
+      .map((record) => record.examinationId)
+  ));
+
+  const [topicNotes, setTopicNotes] = useState<TopicNotesMetadata[]>([]);
+  const [topicNotesReleases, setTopicNotesReleases] = useState<TopicNotesRelease[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.NOTES_RELEASES);
+      return saved ? JSON.parse(saved) as TopicNotesRelease[] : [];
+    } catch {
+      return [];
+    }
+  });
+  const [topicNotesLoaded, setTopicNotesLoaded] = useState(false);
 
   const [syllabusSessions, setSyllabusSessions] = useState<ScheduledSyllabusSession[]>(() => {
     try {
@@ -212,6 +319,7 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
       const parsed: SyllabusActivityEvent[] = JSON.parse(saved);
       const migratedEvents = parsed.flatMap<SyllabusActivityEvent>((event) => {
         if (event.id.startsWith('act-seed-')) return [];
+        if (event.id === 'act-module-finance-submission-batch-daily-mod-2') return [];
         if (event.assessmentId) {
           const schedule = schedules.find(
             (item) => getScheduleBatchId(item) === event.batchId && item.moduleId === event.moduleId
@@ -238,6 +346,31 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
             : matchingBySession.length === 0 && matchingByBatch.length === 1
             ? matchingByBatch[0]
             : undefined;
+        if (
+          event.eventType === 'Topic Notes Uploaded' ||
+          event.eventType === 'Topic Notes Updated' ||
+          event.eventType === 'Topic Notes Released'
+        ) {
+          const topic = initialModulesData
+            .find((item) => item.id === event.moduleId)
+            ?.topics.find((item) => item.id === event.topicId);
+          return matchingSchedule && topic
+            ? [{
+                ...event,
+                batchId: getScheduleBatchId(matchingSchedule),
+                topicName: topic.title,
+                topicNumber: topic.number
+              }]
+            : [];
+        }
+        if (event.eventType === 'Module Submitted for Finance Verification') {
+          return matchingSchedule &&
+            event.savedStatus === 'Saved' &&
+            /^\d{4}-\d{2}-\d{2}$/.test(event.displayDate) &&
+            Number.isFinite(Date.parse(event.timestamp))
+            ? [{ ...event, batchId: getScheduleBatchId(matchingSchedule), batchName: matchingSchedule.batch }]
+            : [];
+        }
         const scheduledDate = event.scheduledDate || event.displayDate;
         if (
           !matchingSchedule ||
@@ -279,7 +412,9 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
         ...getInitialAssessmentActivityEvents(initialAssessments, initialModulesData[0])
       ];
       const eventKey = (event: SyllabusActivityEvent) =>
-        event.assessmentId
+        event.eventType === 'Topic Notes Uploaded'
+          ? event.id
+          : event.assessmentId
           ? `${event.assessmentId}|${event.id}`
           : [event.batchId, event.moduleId, event.eventType, event.topicId || '', event.sessionId || ''].join('|');
       const uniqueEvents = new Map<string, SyllabusActivityEvent>();
@@ -438,12 +573,20 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
   }, [resolvedNotifIds]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEYS.EXAMINATIONS, JSON.stringify(examinationRequests));
-  }, [examinationRequests]);
+    localStorage.setItem(STORAGE_KEYS.EXAMINATIONS, JSON.stringify(examinations));
+  }, [examinations]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.EXAMINATION_MARKS, JSON.stringify(examinationMarks));
+  }, [examinationMarks]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.ASSESSMENTS, JSON.stringify(syllabusAssessments));
   }, [syllabusAssessments]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.NOTES_RELEASES, JSON.stringify(topicNotesReleases));
+  }, [topicNotesReleases]);
 
   // Toast Management
   const addToast = (toast: Omit<ToastMessage, 'id'>) => {
@@ -453,6 +596,72 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 4500);
   };
+
+  useEffect(() => {
+    let isActive = true;
+    getAllTopicNotes()
+      .then(async (savedNotes) => {
+        let notes = savedNotes;
+        if (notes.length === 0) {
+          const assignedModule = modules.find((item) =>
+            schedules.some(
+              (schedule) =>
+                schedule.moduleId === item.id &&
+                isScheduleAssignedToTrainer(schedule, trainer)
+            )
+          );
+          if (assignedModule) {
+            const initialNotes = getInitialTopicNotes(assignedModule, trainer.trainerId);
+            await Promise.all(
+              initialNotes.map(({ metadata, file }) => saveTopicNotes(metadata, file))
+            );
+            notes = await getAllTopicNotes();
+            const seededEvents: SyllabusActivityEvent[] = initialNotes.flatMap(({ metadata }) => {
+              const topic = assignedModule.topics.find((item) => item.id === metadata.topicId);
+              if (!topic) return [];
+              return schedules
+                .filter((schedule) =>
+                  schedule.moduleId === assignedModule.id &&
+                  isScheduleAssignedToTrainer(schedule, trainer)
+                )
+                .map((schedule) => ({
+                  id: `${metadata.id}-seed-uploaded-${getScheduleBatchId(schedule)}`,
+                  timestamp: metadata.uploadedAt,
+                  displayDate: metadata.uploadedAt.slice(0, 10),
+                  batchId: getScheduleBatchId(schedule),
+                  moduleId: assignedModule.id,
+                  moduleName: assignedModule.name,
+                  eventType: 'Topic Notes Uploaded' as const,
+                  topicId: topic.id,
+                  topicName: topic.title,
+                  topicNumber: topic.number,
+                  details: `Sample notes document ${metadata.fileName} is prepared. Batch access remains assessment-gated.`,
+                  savedStatus: 'Saved' as const
+                }));
+            });
+            if (isActive) {
+              setActivityHistory((previous) => {
+                const existingIds = new Set(previous.map((event) => event.id));
+                const newEvents = seededEvents.filter((event) => !existingIds.has(event.id));
+                return newEvents.length > 0 ? [...newEvents, ...previous] : previous;
+              });
+            }
+          }
+        }
+        if (isActive) setTopicNotes(notes);
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : 'Unable to load saved topic notes.';
+        addToast({ type: 'error', title: 'Notes Storage Unavailable', message });
+      })
+      .finally(() => {
+        if (isActive) setTopicNotesLoaded(true);
+      });
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   const removeToast = (id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -538,178 +747,420 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
       )
       .sort((a, b) => b.attempt - a.attempt || b.sentAt.localeCompare(a.sentAt))[0];
 
-  const isSyllabusAssessmentEligible = (
-    assessment: SyllabusAssessment | undefined,
-    expectedStudents: ScheduleItem['students']
+  const completeAssessedTopic = (
+    assessment: SyllabusAssessment,
+    assessmentHistory: SyllabusAssessment[]
   ) => {
-    if (!assessment || assessment.status !== 'Completed' || assessment.students.length !== expectedStudents.length) {
-      return false;
-    }
-    const resultsByStudent = new Map(assessment.students.map((result) => [result.studentId, result]));
-    return expectedStudents.every((student) => {
-      const result = resultsByStudent.get(student.id);
-      return result?.score !== null && result?.score !== undefined && (result.score / 10) * 100 > 75;
-    });
-  };
-
-  // Submit Syllabus Updates
-  const submitSyllabusUpdates = (
-    moduleId: string,
-    topicIds: string[],
-    sessionContextId: string,
-    scheduledDate: string = getCurrentDateISO()
-  ): boolean => {
-    if (!topicIds || topicIds.length === 0) {
-      addToast({
-        type: 'warning',
-        title: 'No Topics Selected',
-        message: 'Please select at least one newly covered topic before submitting.'
-      });
-      return false;
-    }
-
-    const targetModule = modules.find((item) => item.id === moduleId);
-    const affectedSession = schedules.find(
-      (schedule) => schedule.id === sessionContextId && schedule.moduleId === moduleId
+    const schedule = schedules.find(
+      (item) => getScheduleBatchId(item) === assessment.batchId && item.moduleId === assessment.moduleId
     );
-    if (!targetModule || !affectedSession) {
-      addToast({
-        type: 'error',
-        title: 'Unable to Save Syllabus',
-        message: 'The selected module and batch could not be matched. Please reopen the batch and try again.'
-      });
-      return false;
-    }
+    const targetModule = modules.find((item) => item.id === assessment.moduleId);
+    const topic = targetModule?.topics.find((item) => item.id === assessment.topicId);
+    if (
+      !schedule ||
+      !targetModule ||
+      !topic ||
+      !areAllStudentsAssessmentQualified(assessment, schedule.students, assessmentHistory)
+    ) return;
 
-    const batchId = getScheduleBatchId(affectedSession);
-    const ineligibleTopicIds = topicIds.filter((topicId) =>
-      !isSyllabusAssessmentEligible(
-        latestSyllabusAssessment(batchId, moduleId, topicId),
-        affectedSession.students
+    const alreadyCompleted = hasSavedTopicCompletion(
+      activityHistory,
+      schedule.completedTopicIds || [],
+      assessment.batchId,
+      assessment.moduleId,
+      assessment.topicId
+    );
+    if (alreadyCompleted) return;
+
+    const qualifyingResults = getQualifyingAssessmentResults(
+      assessmentHistory.filter((item) =>
+        item.batchId === assessment.batchId &&
+        item.moduleId === assessment.moduleId &&
+        item.topicId === assessment.topicId
       )
     );
-    if (ineligibleTopicIds.length > 0) {
-      const names = ineligibleTopicIds
-        .map((topicId) => targetModule.topics.find((topic) => topic.id === topicId)?.title)
-        .filter((name): name is string => Boolean(name));
-      addToast({
-        type: 'error',
-        title: 'Assessment Criteria Not Met',
-        message: `${names.join(', ')} cannot be submitted until every student has submitted and scored above 75%.`
-      });
-      return false;
-    }
-
-    const scheduledSessionId = getScheduledSessionId(affectedSession.id, scheduledDate);
-    const scheduledSession = syllabusSessions.find((session) => session.id === scheduledSessionId);
-    if (!scheduledSession) {
-      addToast({
-        type: 'error',
-        title: 'Unable to Save Syllabus',
-        message: 'The selected date is not a scheduled session for this batch.'
-      });
-      return false;
-    }
-
-    const conflictingMissedRecord = activityHistory.some(
-      (event) =>
-        event.sessionId === scheduledSession.id &&
-        event.batchId === getScheduleBatchId(affectedSession) &&
-        event.moduleId === moduleId &&
-        event.eventType === 'Class Not Conducted' &&
-        event.savedStatus === 'Saved'
-    );
-    if (conflictingMissedRecord) {
-      addToast({
-        type: 'error',
-        title: 'Unable to Save Syllabus',
-        message: 'This scheduled session already has a saved class-not-conducted outcome.'
-      });
-      return false;
-    }
-
-    const batchCompletedTopicIds = new Set(affectedSession.completedTopicIds || []);
-    const newCompletedTopics = targetModule.topics.filter(
-      (topic) => topicIds.includes(topic.id) && !batchCompletedTopicIds.has(topic.id)
-    );
-    if (newCompletedTopics.length !== topicIds.length) {
-      addToast({
-        type: 'error',
-        title: 'Unable to Save Syllabus',
-        message: 'One or more selected topics are invalid or already recorded for this batch.'
-      });
-      return false;
-    }
-
-    const submittedDate = getCurrentDateISO();
-
-    setModules((prevModules) =>
-      prevModules.map((m) => {
-        if (m.id !== moduleId) return m;
-
-        const updatedTopics = m.topics.map((t) => {
-          if (topicIds.includes(t.id) && !t.isCompleted) {
-            return {
-              ...t,
-              isCompleted: true,
-              completedDate: submittedDate,
-              completedSessionId: sessionContextId
-            };
-          }
-          return t;
-        });
-
-        return { ...m, topics: updatedTopics };
+    const finalAssessmentResult = schedule.students
+      .map((student) => {
+        const result = qualifyingResults.get(student.id);
+        const percentage = result?.score === null || result?.score === undefined
+          ? 'No qualifying score'
+          : `${(result.score / 10) * 100}%`;
+        return `${student.name}: ${percentage}`;
       })
-    );
-
-    setSchedules((prevSchedules) =>
-      prevSchedules.map((schedule) =>
-        schedule.id === affectedSession.id
-          ? {
-              ...schedule,
-              syllabusUpdateStatus: 'Updated',
-              completedTopicIds: [...new Set([...(schedule.completedTopicIds || []), ...topicIds])]
-            }
-          : schedule
-      )
-    );
-
-    // Add activity history events for each completed topic (newest first)
-    const newActivityEvents: SyllabusActivityEvent[] = newCompletedTopics.map((topic) => ({
-      id: `act-${scheduledSession.id}-${topic.id}`,
-      timestamp: new Date().toISOString(),
-      displayDate: submittedDate,
-      scheduledDate,
-      batchId: getScheduleBatchId(affectedSession),
-      moduleId,
+      .join('; ');
+    const completedAt = assessment.completedAt || new Date().toISOString();
+    const event: SyllabusActivityEvent = {
+      id: `act-topic-completed-${assessment.batchId}-${assessment.moduleId}-${assessment.topicId}`,
+      timestamp: completedAt,
+      displayDate: completedAt.slice(0, 10),
+      batchId: assessment.batchId,
+      batchName: schedule.batch,
+      moduleId: assessment.moduleId,
       moduleName: targetModule.name,
       eventType: 'Topic Completed',
       topicId: topic.id,
       topicName: topic.title,
       topicNumber: topic.number,
-      sessionId: scheduledSession.id,
-      sessionIdentifier: `${affectedSession.batch} · Session #${scheduledSession.sessionNumber} · ${scheduledDate} (${scheduledSession.startTime}–${scheduledSession.endTime})`,
+      assessmentId: assessment.id,
+      assessmentCompletionStatus: 'Completed',
+      finalAssessmentResult,
+      details: `All ${schedule.students.length} students completed the assessment and scored above 75%. Final results: ${finalAssessmentResult}`,
       savedStatus: 'Saved'
-    }));
+    };
 
-    setActivityHistory((prev) => {
-      const existingIds = new Set(prev.map((event) => event.id));
-      const uniqueNewEvents = newActivityEvents.filter((event) => !existingIds.has(event.id));
-      return [...uniqueNewEvents, ...prev].sort(
-        (a, b) => Date.parse(b.displayDate) - Date.parse(a.displayDate) ||
-          Date.parse(b.timestamp) - Date.parse(a.timestamp)
+    setSchedules((previous) =>
+      previous.map((item) =>
+        item.id === schedule.id
+          ? {
+              ...item,
+              syllabusUpdateStatus: 'Updated',
+              completedTopicIds: [...new Set([...(item.completedTopicIds || []), topic.id])]
+            }
+          : item
+      )
+    );
+    setActivityHistory((previous) => {
+      const alreadyRecorded = hasSavedTopicCompletion(
+        previous,
+        [],
+        event.batchId,
+        event.moduleId,
+        topic.id
       );
+      return alreadyRecorded ? previous : [event, ...previous];
     });
-
     addToast({
       type: 'success',
-      title: 'Syllabus Updated',
-      message: `Successfully recorded ${topicIds.length} topic${topicIds.length > 1 ? 's' : ''} for ${formatReadableDate(scheduledDate)}.`
+      title: 'Topic Automatically Completed',
+      message: `${topic.title} for ${schedule.batch} is complete. Every student scored above 75%.`
     });
+  };
 
+  const submitModuleForFinanceVerification = (batchId: string, moduleId: string): boolean => {
+    const schedule = schedules.find(
+      (item) => getScheduleBatchId(item) === batchId && item.moduleId === moduleId
+    );
+    const targetModule = modules.find((item) => item.id === moduleId);
+    if (!schedule || !targetModule) {
+      addToast({
+        type: 'error',
+        title: 'Unable to Submit Module',
+        message: 'The selected batch or module could not be matched.'
+      });
+      return false;
+    }
+
+    const submissionKey = `${batchId}|${moduleId}`;
+    const alreadySubmitted = moduleFinanceSubmissionLocks.current.has(submissionKey) ||
+      hasModuleFinanceSubmission(activityHistory, batchId, moduleId);
+    if (alreadySubmitted) {
+      addToast({
+        type: 'info',
+        title: 'Module Already Submitted',
+        message: `${targetModule.name} has already been submitted for this batch.`
+      });
+      return false;
+    }
+
+    const isEligible = isModuleReadyForFinanceVerification({
+      topicIds: targetModule.topics.map((topic) => topic.id),
+      batchId,
+      moduleId,
+      students: schedule.students,
+      completedTopicIds: schedule.completedTopicIds || [],
+      activityHistory,
+      assessments: syllabusAssessments
+    });
+    if (!isEligible) {
+      addToast({
+        type: 'warning',
+        title: 'Module Not Ready',
+        message: 'Every planned topic must be recorded as completed after all students pass its MCQ assessment above 75%.'
+      });
+      return false;
+    }
+
+    const timestamp = new Date().toISOString();
+    const event: SyllabusActivityEvent = {
+      id: `act-module-finance-submission-${batchId}-${moduleId}`,
+      timestamp,
+      displayDate: timestamp.slice(0, 10),
+      batchId,
+      batchName: schedule.batch,
+      moduleId,
+      moduleName: targetModule.name,
+      sessionId: schedule.id,
+      trainerId: trainer.trainerId,
+      eventType: 'Module Submitted for Finance Verification',
+      details: `Submitted by ${trainer.name} (${trainer.trainerId}) for independent Finance Department verification. No examination has been scheduled or approved.`,
+      savedStatus: 'Saved'
+    };
+
+    moduleFinanceSubmissionLocks.current.add(submissionKey);
+    setActivityHistory((previous) => {
+      const alreadyRecorded = previous.some((item) =>
+        item.batchId === batchId &&
+        item.moduleId === moduleId &&
+        item.eventType === 'Module Submitted for Finance Verification' &&
+        item.savedStatus === 'Saved'
+      );
+      return alreadyRecorded ? previous : [event, ...previous];
+    });
+    addToast({
+      type: 'success',
+      title: 'Module Submitted',
+      message: 'Module successfully submitted for Finance Department verification. The Finance Department will verify student eligibility for the examination.'
+    });
     return true;
   };
+
+  const getTopicNotesAvailability = (
+    batchId: string,
+    moduleId: string,
+    topicId: string
+  ): { status: TopicNotesAvailabilityStatus; notes?: TopicNotesMetadata } => {
+    const schedule = schedules.find(
+      (item) => getScheduleBatchId(item) === batchId && item.moduleId === moduleId
+    );
+    if (!schedule || !isScheduleAssignedToTrainer(schedule, trainer)) {
+      return { status: 'Notes Locked' };
+    }
+
+    const notes = topicNotes.find(
+      (item) => item.moduleId === moduleId && item.topicId === topicId
+    );
+    const hasSavedCompletion = hasSavedTopicCompletion(
+      activityHistory,
+      schedule.completedTopicIds || [],
+      batchId,
+      moduleId,
+      topicId
+    );
+    const status = getTopicNotesAvailabilityStatus(hasSavedCompletion, Boolean(notes));
+    return status === 'Notes Uploaded'
+      ? { status, notes }
+      : { status };
+  };
+
+  useEffect(() => {
+    if (!topicNotesLoaded) return;
+
+    const releaseEvents: SyllabusActivityEvent[] = [];
+    const releasesById = new Map(topicNotesReleases.map((release) => [release.id, release]));
+    let releasesChanged = false;
+
+    schedules
+      .filter((schedule) => isScheduleAssignedToTrainer(schedule, trainer))
+      .forEach((schedule) => {
+        const batchId = getScheduleBatchId(schedule);
+        topicNotes
+          .filter((notes) => notes.moduleId === schedule.moduleId)
+          .forEach((notes) => {
+            const id = createTopicNotesReleaseId(batchId, notes.moduleId, notes.topicId);
+            const current = releasesById.get(id);
+            const completionEvent = activityHistory.find(
+              (event) =>
+                event.batchId === batchId &&
+                event.moduleId === notes.moduleId &&
+                event.topicId === notes.topicId &&
+                event.eventType === 'Topic Completed' &&
+                event.savedStatus === 'Saved'
+            );
+            const topicIsCompleted = hasSavedTopicCompletion(
+              activityHistory,
+              schedule.completedTopicIds || [],
+              batchId,
+              notes.moduleId,
+              notes.topicId
+            );
+            const assessment = latestSyllabusAssessment(batchId, notes.moduleId, notes.topicId);
+            if (!topicIsCompleted) return;
+            if (current?.notesVersion === notes.version) return;
+
+            const topic = modules
+              .find((item) => item.id === notes.moduleId)
+              ?.topics.find((item) => item.id === notes.topicId);
+            const releasedAt = notes.lastUpdatedAt;
+            releasesById.set(id, {
+              id,
+              batchId,
+              moduleId: notes.moduleId,
+              topicId: notes.topicId,
+              notesId: notes.id,
+              notesVersion: notes.version,
+              assessmentCompletionStatus: 'Completed',
+              availabilityStatus: 'Notes Uploaded',
+              releasedAt
+            });
+            releasesChanged = true;
+            releaseEvents.push({
+              id: `${id}-v${notes.version}`,
+              timestamp: releasedAt,
+              displayDate: releasedAt.slice(0, 10),
+              batchId,
+              moduleId: notes.moduleId,
+              moduleName: schedule.moduleName,
+              eventType: current ? 'Topic Notes Updated' : 'Topic Notes Released',
+              topicId: notes.topicId,
+              topicName: completionEvent?.topicName || topic?.title,
+              topicNumber: completionEvent?.topicNumber || topic?.number,
+              assessmentId: assessment?.id,
+              relatedCompletionEventId: completionEvent?.id,
+              details: current
+                ? `Updated notes v${notes.version} (${notes.fileName}) are available to this batch.`
+                : `Notes v${notes.version} (${notes.fileName}) were automatically released to this batch.`,
+              savedStatus: 'Saved'
+            });
+          });
+      });
+
+    if (releasesChanged) setTopicNotesReleases([...releasesById.values()]);
+
+    if (releaseEvents.length > 0) {
+      setActivityHistory((previous) => {
+        const existingIds = new Set(previous.map((event) => event.id));
+        const newEvents = releaseEvents.filter((event) => !existingIds.has(event.id));
+        return newEvents.length > 0 ? [...newEvents, ...previous] : previous;
+      });
+    }
+  }, [topicNotesLoaded, topicNotes, topicNotesReleases, schedules, trainer.assignedBatches, activityHistory, syllabusAssessments, modules]);
+
+  const uploadTopicNotes = async (
+    file: File,
+    moduleId: string,
+    topicId: string
+  ): Promise<boolean> => {
+    const fileValidationError = getTopicNotesFileValidationError(file);
+    if (fileValidationError) {
+      addToast({
+        type: 'error',
+        title: file.size > MAX_TOPIC_NOTES_FILE_SIZE_BYTES ? 'Notes File Too Large' : 'Invalid Notes File',
+        message: fileValidationError
+      });
+      return false;
+    }
+
+    const targetModule = modules.find((item) => item.id === moduleId);
+    const topic = targetModule?.topics.find((item) => item.id === topicId);
+    const assignedSchedules = schedules.filter(
+      (schedule) =>
+        schedule.moduleId === moduleId &&
+        isScheduleAssignedToTrainer(schedule, trainer)
+    );
+    if (
+      !targetModule ||
+      !topic ||
+      assignedSchedules.length === 0
+    ) {
+      addToast({
+        type: 'error',
+        title: 'Module Not Assigned',
+        message: 'Notes can only be prepared for a topic in a module assigned to your trainer account.'
+      });
+      return false;
+    }
+
+    const notesId = createTopicNotesId(moduleId, topicId);
+    const existingNotes = topicNotes.find((notes) => notes.id === notesId);
+    const lastUpdatedAt = new Date().toISOString();
+    const version = (existingNotes?.version || 0) + 1;
+    const metadata: TopicNotesMetadata = {
+      id: notesId,
+      trainerId: trainer.trainerId,
+      moduleId,
+      topicId,
+      fileName: file.name,
+      fileSize: file.size,
+      fileType: file.type || 'application/octet-stream',
+      storageReference: `${notesId}:v${version}`,
+      version,
+      uploadedAt: existingNotes?.uploadedAt || lastUpdatedAt,
+      lastUpdatedAt
+    };
+
+    try {
+      await saveTopicNotes(metadata, file);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'The notes file could not be stored in this browser.';
+      addToast({ type: 'error', title: 'Notes Upload Failed', message });
+      return false;
+    }
+
+    setTopicNotes((previous) => [
+      metadata,
+      ...previous.filter((item) => item.id !== metadata.id)
+    ]);
+
+    const eventType = existingNotes ? 'Topic Notes Updated' : 'Topic Notes Uploaded';
+    const events: SyllabusActivityEvent[] = assignedSchedules.map((schedule) => ({
+      id: `${notesId}-${eventType.toLowerCase().replaceAll(' ', '-')}-v${version}-${getScheduleBatchId(schedule)}`,
+      timestamp: lastUpdatedAt,
+      displayDate: getCurrentDateISO(),
+      batchId: getScheduleBatchId(schedule),
+      moduleId,
+      moduleName: targetModule.name,
+      eventType,
+      topicId,
+      topicName: topic.title,
+      topicNumber: topic.number,
+      details: existingNotes
+        ? `Trainer replaced the central notes document with ${file.name} (version ${version}). Batch access remains assessment-gated.`
+        : `Trainer uploaded the central notes document ${file.name} (version ${version}). Batch access remains assessment-gated.`,
+      savedStatus: 'Saved'
+    }));
+    setActivityHistory((previous) => [...events, ...previous]);
+    addToast({
+      type: 'success',
+      title: existingNotes ? 'Topic Notes Updated' : 'Topic Notes Saved',
+      message: `${file.name} was saved for ${topic.title} and is retained in this browser.`
+    });
+    return true;
+  };
+
+  const downloadTopicNotes = async (
+    notes: TopicNotesMetadata,
+    batchId: string
+  ): Promise<boolean> => {
+    const availability = getTopicNotesAvailability(batchId, notes.moduleId, notes.topicId);
+    if (
+      availability.status !== 'Notes Uploaded' ||
+      availability.notes?.storageReference !== notes.storageReference
+    ) {
+      addToast({
+        type: 'error',
+        title: 'Notes Locked',
+        message: 'This batch has not unlocked the current notes version.'
+      });
+      return false;
+    }
+
+    try {
+      const file = await getTopicNotesFile(notes.storageReference);
+      if (!file) {
+        addToast({
+          type: 'error',
+          title: 'Notes File Missing',
+          message: 'The saved file is no longer available in this browser. Upload the notes again.'
+        });
+        return false;
+      }
+
+      const url = URL.createObjectURL(file);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = notes.fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      return true;
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unable to retrieve the saved notes file.';
+      addToast({ type: 'error', title: 'Notes Download Failed', message });
+      return false;
+    }
+  };
+
 
   const sendSyllabusAssessment = (
     batchId: string,
@@ -739,11 +1190,11 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
       });
       return undefined;
     }
-    if (latest && isSyllabusAssessmentEligible(latest, schedule.students)) {
+    if (latest && areAllStudentsAssessmentQualified(latest, schedule.students, syllabusAssessments)) {
       addToast({
         type: 'info',
         title: 'Assessment Passed',
-        message: 'All students scored above 75%. Submit this topic to Admin instead of sending another assessment.'
+        message: 'All students have a qualifying score above 75%. This topic has been completed automatically.'
       });
       return undefined;
     }
@@ -757,6 +1208,15 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
     }
 
     const sentAt = new Date().toISOString();
+    const previousAttempts = syllabusAssessments.filter((item) =>
+      item.batchId === batchId &&
+      item.moduleId === moduleId &&
+      item.topicId === topicId
+    );
+    const previouslyPassed = getQualifyingAssessmentResults(previousAttempts);
+    const studentsNeedingAssessment = schedule.students.filter(
+      (student) => !previouslyPassed.has(student.id)
+    );
     const assessment: SyllabusAssessment = {
       id: `mcq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       batchId,
@@ -765,7 +1225,7 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
       topicName: topic.title,
       attempt: (latest?.attempt || 0) + 1,
       questions: createSyllabusAssessmentQuestions(topicId, topic.title, targetModule.topics),
-      students: schedule.students.map((student) => ({
+      students: studentsNeedingAssessment.map((student) => ({
         studentId: student.id,
         studentName: student.name,
         score: null
@@ -842,9 +1302,15 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
         type: failedCount === 0 ? 'success' : 'warning',
         title: failedCount === 0 ? 'Assessment Completed' : 'Topic Requires Retake',
         message: failedCount === 0
-          ? 'Every student scored above 75%. The topic is eligible for submission to Admin.'
+          ? 'Every student in this assessment passed. Syllabus completion is being evaluated automatically.'
           : `${failedCount} student${failedCount === 1 ? '' : 's'} scored 75% or below. Conduct the topic again before a fresh assessment.`
       });
+      if (failedCount === 0) {
+        const assessmentHistory = syllabusAssessments.map((item) =>
+          item.id === updatedAssessment.id ? updatedAssessment : item
+        );
+        completeAssessedTopic(updatedAssessment, assessmentHistory);
+      }
       return;
     }
 
@@ -1098,11 +1564,27 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
   }, [todayStr, todayAdminTasks, schedules]);
 
+  const publishedExaminations = useMemo(
+    () => getPublishedAdminExaminations({
+      examinations,
+      schedules,
+      modules,
+      assessments: syllabusAssessments,
+      activityHistory
+    }),
+    [examinations, schedules, modules, syllabusAssessments, activityHistory]
+  );
+
   // Notifications calculation
   const allGeneratedNotifications = useMemo(() => {
     return [
       ...generateReminders(schedules, activityHistory, currentTime),
-      ...getExaminationNotifications(examinationRequests),
+      ...getAdminExaminationNotifications(publishedExaminations),
+      ...examinationMarks.flatMap((record) => {
+        const examination = publishedExaminations.find((item) => item.id === record.examinationId);
+        if (record.status !== 'Submitted' || !record.submittedAt || !examination) return [];
+        return [createAdminMarksSubmittedNotification(record, examination)];
+      }),
       ...activityHistory
         .filter((event) => event.eventType === 'Topic Being Taken Again')
         .map((event) => ({
@@ -1114,9 +1596,30 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
           isResolved: false,
           moduleId: event.moduleId,
           actionLabel: 'Review Syllabus Tracker'
-        }))
+        })),
+      ...activityHistory
+        .filter((event) =>
+          event.eventType === 'Topic Completed' &&
+          event.assessmentCompletionStatus === 'Completed'
+        )
+        .map((event) => ({
+          id: `syllabus-completion-${event.id}`,
+          title: 'Syllabus Topic Completed',
+          message: `${event.topicName || 'A topic'} was automatically completed for ${event.batchName || event.batchId} in ${event.moduleName}.`,
+          timestamp: event.timestamp,
+          category: 'system' as const,
+          isResolved: false,
+          moduleId: event.moduleId,
+          actionLabel: 'Review Syllabus Tracker'
+        })),
+      ...activityHistory
+        .filter((event) =>
+          event.eventType === 'Module Submitted for Finance Verification' &&
+          event.savedStatus === 'Saved'
+        )
+        .map(createFinanceModuleSubmissionNotification)
     ];
-  }, [schedules, activityHistory, currentTime, examinationRequests]);
+  }, [schedules, activityHistory, currentTime, publishedExaminations, examinationMarks]);
 
   const notifications = useMemo(() => {
     return allGeneratedNotifications.map((notif) => ({
@@ -1134,39 +1637,109 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
     });
   };
 
-  const submitExaminationRequest: TrainerContextType['submitExaminationRequest'] = (request) => {
-    const schedule = schedules.find(
-      (item) => getScheduleBatchId(item) === request.batchId && item.moduleId === request.moduleId
-    );
-    const selectedModule = modules.find((item) => item.id === request.moduleId);
-    if (!schedule || !selectedModule) {
-      addToast({
-        type: 'error',
-        title: 'Unable to Submit Request',
-        message: 'The selected batch or module is no longer available.'
-      });
-      return undefined;
+  const saveExaminationMarks: TrainerContextType['saveExaminationMarks'] = (examinationId, studentMarks) => {
+    if (examinationMarksLocks.current.has(examinationId)) return false;
+    examinationMarksLocks.current.add(examinationId);
+    try {
+      const examination = publishedExaminations.find((item) => item.id === examinationId);
+      if (!examination || !schedules.some(
+        (schedule) =>
+          getScheduleBatchId(schedule) === examination.batchId &&
+          schedule.moduleId === examination.moduleId &&
+          isScheduleAssignedToTrainer(schedule, trainer)
+      )) {
+        addToast({ type: 'error', title: 'Unable to Save Marks', message: 'This Admin schedule is not assigned to your trainer account.' });
+        return false;
+      }
+      if (!isExaminationMarksEntryOpen(examination, currentTime)) {
+        addToast({ type: 'error', title: 'Marks Entry Not Open', message: 'Marks can be entered from the earliest scheduled examination date and time.' });
+        return false;
+      }
+      const existing = examinationMarks.find((record) => record.examinationId === examinationId);
+      if (existing?.status === 'Submitted' || submittedExaminationIds.current.has(examinationId)) {
+        addToast({ type: 'error', title: 'Marks Are Locked', message: 'Submitted examination marks cannot be changed.' });
+        return false;
+      }
+      const validationError = getMarksValidationError(examination, studentMarks, false);
+      if (validationError) {
+        addToast({ type: 'error', title: 'Unable to Save Marks', message: validationError });
+        return false;
+      }
+      const record: ExaminationMarksRecord = {
+        id: existing?.id || `marks-${examination.id}`,
+        examinationId,
+        batchId: examination.batchId,
+        moduleId: examination.moduleId,
+        trainerId: trainer.trainerId,
+        studentMarks: studentMarks.map((student) => ({ ...student })),
+        status: 'Draft',
+        savedAt: new Date().toISOString()
+      };
+      setExaminationMarks((previous) => [
+        ...previous.filter((item) => item.examinationId !== examinationId),
+        record
+      ]);
+      addToast({ type: 'success', title: 'Marks Saved', message: 'The partial marks draft was saved on this device.' });
+      return true;
+    } finally {
+      examinationMarksLocks.current.delete(examinationId);
     }
+  };
 
-    const nextRequest: ExaminationRequest = {
-      ...request,
-      id: `EXR-${new Date().getFullYear()}-${crypto.randomUUID().slice(0, 8).toUpperCase()}`,
-      submittedAt: new Date().toISOString(),
-      requestStatus: 'Pending Admin Review',
-      eventStatus: 'Upcoming',
-      batchName: schedule.batch,
-      moduleName: selectedModule.name,
-      topicNames: request.topicIds
-        .map((topicId) => selectedModule.topics.find((topic) => topic.id === topicId)?.title)
-        .filter((name): name is string => Boolean(name))
-    };
-    setExaminationRequests((previous) => [nextRequest, ...previous]);
-    addToast({
-      type: 'success',
-      title: 'Examination Request Submitted',
-      message: `${nextRequest.id} is awaiting admin review.`
-    });
-    return nextRequest;
+  const submitExaminationMarks: TrainerContextType['submitExaminationMarks'] = (examinationId, studentMarks) => {
+    if (examinationMarksLocks.current.has(examinationId)) return false;
+    examinationMarksLocks.current.add(examinationId);
+    try {
+      const examination = publishedExaminations.find((item) => item.id === examinationId);
+      if (!examination || !schedules.some(
+        (schedule) =>
+          getScheduleBatchId(schedule) === examination.batchId &&
+          schedule.moduleId === examination.moduleId &&
+          isScheduleAssignedToTrainer(schedule, trainer)
+      )) {
+        addToast({ type: 'error', title: 'Unable to Submit Marks', message: 'This Admin schedule is not assigned to your trainer account.' });
+        return false;
+      }
+      if (!isExaminationMarksEntryOpen(examination, currentTime)) {
+        addToast({ type: 'error', title: 'Marks Entry Not Open', message: 'Marks can be submitted from the earliest scheduled examination date and time.' });
+        return false;
+      }
+      const existing = examinationMarks.find((record) => record.examinationId === examinationId);
+      if (existing?.status === 'Submitted' || submittedExaminationIds.current.has(examinationId)) {
+        addToast({ type: 'error', title: 'Marks Already Submitted', message: 'This examination has already been submitted and is locked.' });
+        return false;
+      }
+      const validationError = getMarksValidationError(examination, studentMarks, true);
+      if (validationError) {
+        addToast({ type: 'error', title: 'Marks Submission Incomplete', message: validationError });
+        return false;
+      }
+      const submittedAt = new Date().toISOString();
+      const record: ExaminationMarksRecord = {
+        id: existing?.id || `marks-${examination.id}`,
+        examinationId,
+        batchId: examination.batchId,
+        moduleId: examination.moduleId,
+        trainerId: trainer.trainerId,
+        studentMarks: studentMarks.map((student) => ({ ...student })),
+        status: 'Submitted',
+        savedAt: submittedAt,
+        submittedAt
+      };
+      submittedExaminationIds.current.add(examinationId);
+      setExaminationMarks((previous) => [
+        ...previous.filter((item) => item.examinationId !== examinationId),
+        record
+      ]);
+      addToast({
+        type: 'success',
+        title: 'Marks Submitted',
+        message: 'Marks are final and read-only. A mock Admin notification is visible in Notifications.'
+      });
+      return true;
+    } finally {
+      examinationMarksLocks.current.delete(examinationId);
+    }
   };
 
   // Dynamic Counts - Today's classes count based on day-of-week schedule (MWF / TTS / Everyday)
@@ -1194,6 +1767,44 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
 
   // Reset function to clear mock modifications
   const resetAllMockData = () => {
+    moduleFinanceSubmissionLocks.current.clear();
+    const initialModule = initialModulesData[0];
+    const initialSchedules = getInitialSchedules();
+    const initialNotes = getInitialTopicNotes(initialModule, trainer.trainerId);
+    const initialNoteEvents: SyllabusActivityEvent[] = initialNotes.flatMap(({ metadata }) => {
+      const topic = initialModule.topics.find((item) => item.id === metadata.topicId);
+      if (!topic) return [];
+      return initialSchedules
+        .filter((schedule) =>
+          schedule.moduleId === initialModule.id &&
+          isScheduleAssignedToTrainer(schedule, trainer)
+        )
+        .map((schedule) => ({
+          id: `${metadata.id}-seed-uploaded-${getScheduleBatchId(schedule)}`,
+          timestamp: metadata.uploadedAt,
+          displayDate: metadata.uploadedAt.slice(0, 10),
+          batchId: getScheduleBatchId(schedule),
+          moduleId: initialModule.id,
+          moduleName: initialModule.name,
+          eventType: 'Topic Notes Uploaded' as const,
+          topicId: topic.id,
+          topicName: topic.title,
+          topicNumber: topic.number,
+          details: `Sample notes document ${metadata.fileName} is prepared. Batch access remains assessment-gated.`,
+          savedStatus: 'Saved' as const
+        }));
+    });
+
+    setTopicNotes([]);
+    clearAllTopicNotes()
+      .then(async () => {
+        await Promise.all(initialNotes.map(({ metadata, file }) => saveTopicNotes(metadata, file)));
+        setTopicNotes(initialNotes.map(({ metadata }) => metadata));
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : 'Unable to restore the sample topic notes.';
+        addToast({ type: 'error', title: 'Notes Reset Failed', message });
+      });
     localStorage.removeItem(STORAGE_KEYS.MODULES);
     localStorage.removeItem(STORAGE_KEYS.SCHEDULES);
     localStorage.removeItem(STORAGE_KEYS.SESSIONS);
@@ -1201,21 +1812,28 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
     localStorage.removeItem(STORAGE_KEYS.ACTIVITY);
     localStorage.removeItem(STORAGE_KEYS.RESOLVED_NOTIFS);
     localStorage.removeItem(STORAGE_KEYS.EXAMINATIONS);
+    localStorage.removeItem('academia_trainer_examination_requests_v1');
+    localStorage.removeItem(STORAGE_KEYS.EXAMINATION_MARKS);
     localStorage.removeItem(STORAGE_KEYS.ASSESSMENTS);
+    localStorage.removeItem(STORAGE_KEYS.NOTES_RELEASES);
 
     setModules(initialModulesData);
+    setTopicNotesReleases([]);
+    setTopicNotes([]);
     setSchedules(getInitialSchedules());
     setSyllabusSessions(getInitialScheduledSessions());
     setAdminTasks(getInitialAdminTasks());
-    const initialSchedules = getInitialSchedules();
     const initialAssessments = getInitialSyllabusAssessments(initialSchedules, initialModulesData[0]);
     setActivityHistory([
       ...getInitialActivityEvents(initialSchedules),
-      ...getInitialAssessmentActivityEvents(initialAssessments, initialModulesData[0])
+      ...getInitialAssessmentActivityEvents(initialAssessments, initialModule),
+      ...initialNoteEvents
     ]);
     setSyllabusAssessments(initialAssessments);
     setResolvedNotifIds([]);
-    setExaminationRequests(getInitialExaminationRequests(initialSchedules));
+    setExaminations(getInitialAdminExaminations(initialSchedules));
+    setExaminationMarks([]);
+    submittedExaminationIds.current.clear();
 
     addToast({
       type: 'info',
@@ -1239,8 +1857,12 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
         freeHourSlots,
         activityHistory,
         notifications,
-        examinationRequests,
+        examinations: publishedExaminations,
+        examinationMarks,
         syllabusAssessments,
+        topicNotes,
+        topicNotesReleases,
+        topicNotesLoaded,
         activeRemindersCount,
         pendingApprovalsCount,
         todayClassesCount,
@@ -1251,14 +1873,18 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
         removeToast,
         approveSchedule,
         requestScheduleChange,
-        submitSyllabusUpdates,
+        submitModuleForFinanceVerification,
         sendSyllabusAssessment,
         simulateSyllabusAssessmentResponses,
         conductTopicAgain,
+        uploadTopicNotes,
+        getTopicNotesAvailability,
+        downloadTopicNotes,
         recordClassNotConducted,
         updateAdminTaskStatus,
         resolveNotification,
-        submitExaminationRequest,
+        saveExaminationMarks,
+        submitExaminationMarks,
         resetAllMockData
       }}
     >

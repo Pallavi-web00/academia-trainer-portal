@@ -29,6 +29,10 @@ Built strictly as an interactive frontend with clean mock data architecture, rea
    - The portal features interactive tracking where trainers can start tasks, log notes, and mark assignments complete.
 5. **Collapsible Sidebar**
    - On desktop, the sidebar can be collapsed into a compact icon rail (or expanded to full width) via the toggle button at the bottom of the sidebar or in the top navigation bar.
+6. **Topic-Wise Notes**
+   - Trainers prepare one notes document per assigned module/topic; each batch unlocks it independently after every student scores above 75% and topic completion is saved.
+   - Notes files and their version history are retained in browser IndexedDB for this frontend demonstration, not uploaded to a remote server.
+   - The maximum upload size is configurable with `VITE_TOPIC_NOTES_MAX_FILE_SIZE_MB` (10 MB by default).
 
 ---
 
@@ -44,9 +48,21 @@ Built strictly as an interactive frontend with clean mock data architecture, rea
   - View details, approve schedules, and request changes with mandatory justification.
 - **Syllabus Tracker**:
   - 40-topic curriculum checklist.
-  - Multi-topic selection and dynamic system date recording.
+  - Automatically completes a topic for a batch after all students finish the MCQ assessment and each scores above 75%.
+  - Retests target students who have not yet earned a qualifying score; existing passing results are retained.
+  - Completion timestamps, batch-specific progress, Syllabus Activity History, and completion notifications update automatically.
   - "Class Not Conducted" flow with single/multi-session handling.
+  - MCQ assessment tracking and batch-specific notes availability.
   - Syllabus Activity History (newest first).
+- **Examinations**:
+  - Shows mock Admin-published, batch/module-specific component schedules and approved eligible students.
+  - Includes a seeded Everyday sample: 6 eligible students, Theory on 10 Nov 2026, Practical on 12 Nov 2026, and Project on 15 Nov 2026; marks entry opens at the Theory start time.
+  - Opens marks entry from the earliest scheduled component date/time; partial drafts and final submissions are stored in browser localStorage.
+  - Requires marks for every eligible student and every scheduled component before final submission; submitted marks are read-only.
+  - Schedule and marks notifications are mock handoffs only; no external Admin service or persistent backend is connected.
+- **Notes Management**:
+  - Assigned-module topic list with upload and document-replacement actions.
+  - Central topic-wise notes with automatic, batch-specific release after successful assessment and saved topic completion.
 - **Session History**:
   - Comprehensive archive of completed, missed, and scheduled sessions.
   - Filters by Batch, Outcome, and Date Range.

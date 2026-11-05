@@ -8,7 +8,6 @@ import {
   AlertTriangle,
   History,
   CheckSquare,
-  Save,
   Layers,
   Sparkles,
   Search,
@@ -27,7 +26,10 @@ import {
   ExternalLink,
   RotateCcw,
   Eye,
-  Send
+  Send,
+  Download,
+  FileText,
+  Building2
 } from 'lucide-react';
 import { useTrainer } from '../context/TrainerContext';
 import { calculateModuleProgress } from '../utils/syllabusProgress';
@@ -45,6 +47,12 @@ import { StatusBadge } from '../components/common/StatusBadge';
 import { EmptyState } from '../components/common/EmptyState';
 import { ScheduleItem } from '../types';
 import { getScheduledSessionId } from '../data/scheduleData';
+import { Modal } from '../components/common/Modal';
+import {
+  areAllStudentsAssessmentQualified,
+  getQualifyingAssessmentResults,
+  isModuleReadyForFinanceVerification
+} from '../utils/syllabusAssessment';
 
 export const SyllabusTracker: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -55,12 +63,14 @@ export const SyllabusTracker: React.FC = () => {
     syllabusSessions,
     currentTime,
     activityHistory,
-    submitSyllabusUpdates,
     syllabusAssessments,
+    submitModuleForFinanceVerification,
     sendSyllabusAssessment,
     simulateSyllabusAssessmentResponses,
     conductTopicAgain,
-    recordClassNotConducted
+    recordClassNotConducted,
+    getTopicNotesAvailability,
+    downloadTopicNotes
   } = useTrainer();
 
   const sessionParam = searchParams.get('session');
@@ -92,10 +102,10 @@ export const SyllabusTracker: React.FC = () => {
   const [isHistoryExpanded, setIsHistoryExpanded] = useState<boolean>(true);
 
   // Form & Interaction state for the active batch
-  const [selectedTopicIds, setSelectedTopicIds] = useState<string[]>([]);
   const [expandedScoreTopicId, setExpandedScoreTopicId] = useState<string | null>(null);
   const [expandedAssessmentId, setExpandedAssessmentId] = useState<string | null>(null);
   const [isMissedModalOpen, setIsMissedModalOpen] = useState(false);
+  const [isFinanceSubmissionModalOpen, setIsFinanceSubmissionModalOpen] = useState(false);
   const [rosterBatch, setRosterBatch] = useState<ScheduleItem | null>(null);
   const [activeDateContext, setActiveDateContext] = useState<string>(dateParam || getCurrentDateISO());
   const [topicSearch, setTopicSearch] = useState<string>('');
@@ -157,10 +167,48 @@ export const SyllabusTracker: React.FC = () => {
     return getBatchCompletedTopicIds(currentBatch);
   }, [currentBatch, module.topics]);
 
+  const completionEventByTopic = useMemo(() => {
+    const events = activityHistory
+      .filter((event) =>
+        currentBatch &&
+        event.batchId === getScheduleBatchId(currentBatch) &&
+        event.moduleId === module.id &&
+        event.eventType === 'Topic Completed' &&
+        event.savedStatus === 'Saved' &&
+        event.topicId
+      )
+      .sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
+    return new Map(
+      events.flatMap((event) => event.topicId ? [[event.topicId, event] as const] : [])
+    );
+  }, [activityHistory, currentBatch, module.id]);
+
+  const moduleFinanceSubmission = useMemo(() => {
+    if (!currentBatch) return undefined;
+    return activityHistory.find((event) =>
+      event.batchId === getScheduleBatchId(currentBatch) &&
+      event.moduleId === module.id &&
+      event.eventType === 'Module Submitted for Finance Verification' &&
+      event.savedStatus === 'Saved'
+    );
+  }, [activityHistory, currentBatch, module.id]);
+
+  const moduleReadyForFinanceVerification = useMemo(
+    () => Boolean(currentBatch && isModuleReadyForFinanceVerification({
+      topicIds: module.topics.map((topic) => topic.id),
+      batchId: getScheduleBatchId(currentBatch),
+      moduleId: module.id,
+      students: currentBatch.students,
+      completedTopicIds: activeBatchCompletedTopicIds,
+      activityHistory,
+      assessments: syllabusAssessments
+    })),
+    [currentBatch, module.id, module.topics, activeBatchCompletedTopicIds, activityHistory, syllabusAssessments]
+  );
+
   // Handle Back to Batches
   const handleBackToBatches = () => {
     setSelectedBatchId(null);
-    setSelectedTopicIds([]);
     setExpandedScoreTopicId(null);
     setExpandedAssessmentId(null);
     setTopicSearch('');
@@ -168,77 +216,13 @@ export const SyllabusTracker: React.FC = () => {
     navigate('/syllabus', { replace: true });
   };
 
-  // Toggle unsaved checkbox
-  const toggleTopicSelection = (topicId: string, isAlreadyCompleted: boolean) => {
-    if (isAlreadyCompleted || isCurrentContextMissed) return;
-
-    setSelectedTopicIds((prev) =>
-      prev.includes(topicId) ? prev.filter((id) => id !== topicId) : [...prev, topicId]
-    );
-  };
-
-  // Submit topic updates:
-  // "only then the trainer can update the syllabus completed, this update will be seen in the table in the my class schedule menu"
-  const handleSaveTopics = () => {
+  const handleFinanceSubmissionConfirm = () => {
     if (!currentBatch) return;
-    const eligibleTopicIds = selectedTopicIds.filter((topicId) => {
-      const attempts = syllabusAssessments
-        .filter((assessment) =>
-          assessment.batchId === getScheduleBatchId(currentBatch) &&
-          assessment.moduleId === module.id &&
-          assessment.topicId === topicId
-        )
-        .sort((a, b) => b.attempt - a.attempt);
-      const latest = attempts[0];
-      const resultsByStudent = new Map(latest?.students.map((student) => [student.studentId, student]));
-      return Boolean(
-        latest &&
-        latest.status === 'Completed' &&
-        latest.students.length === currentBatch.students.length &&
-        currentBatch.students.every((student) => {
-          const result = resultsByStudent.get(student.id);
-          return result?.score !== null && result?.score !== undefined && (result.score / 10) * 100 > 75;
-        })
-      );
-    });
-    if (eligibleTopicIds.length === 0) return;
-    const submissionDate = syllabusSessions.some(
-      (session) =>
-        session.scheduleId === currentBatch.id &&
-        session.scheduledDate === activeDateContext
-    )
-      ? activeDateContext
-      : syllabusSessions
-        .filter((session) =>
-          session.scheduleId === currentBatch.id &&
-          session.scheduledDate <= activeDateContext
-        )
-        .sort((a, b) => b.scheduledDate.localeCompare(a.scheduledDate))[0]?.scheduledDate
-        || activeDateContext;
-    const ok = submitSyllabusUpdates(
-      module.id,
-      eligibleTopicIds,
-      currentBatch.id,
-      submissionDate
+    const submitted = submitModuleForFinanceVerification(
+      getScheduleBatchId(currentBatch),
+      module.id
     );
-    if (ok) {
-      setSelectedTopicIds((previous) => previous.filter((topicId) => !eligibleTopicIds.includes(topicId)));
-      setExpandedScoreTopicId(null);
-      setExpandedAssessmentId(null);
-    }
-  };
-
-  // Quick select all uncompleted topics
-  const handleSelectAllRemaining = () => {
-    if (isCurrentContextMissed || !currentBatch) return;
-    const remainingIds = module.topics
-      .filter((t) => !activeBatchCompletedTopicIds.includes(t.id))
-      .map((t) => t.id);
-    setSelectedTopicIds(remainingIds);
-  };
-
-  const handleClearSelection = () => {
-    setSelectedTopicIds([]);
+    if (submitted) setIsFinanceSubmissionModalOpen(false);
   };
 
   // Filtered topics for search / tab
@@ -270,20 +254,10 @@ export const SyllabusTracker: React.FC = () => {
 
   const getAssessmentEligibility = (topicId: string) => {
     if (!currentBatch) return false;
-    const latest = getTopicAssessments(topicId)[0];
-    const resultsByStudent = new Map(latest?.students.map((student) => [student.studentId, student]));
-    return Boolean(
-      latest &&
-      latest.status === 'Completed' &&
-      latest.students.length === currentBatch.students.length &&
-      currentBatch.students.every((student) => {
-        const result = resultsByStudent.get(student.id);
-        return result?.score !== null && result?.score !== undefined && (result.score / 10) * 100 > 75;
-      })
-    );
+    const attempts = getTopicAssessments(topicId);
+    const latest = attempts[0];
+    return areAllStudentsAssessmentQualified(latest, currentBatch.students, attempts);
   };
-
-  const eligibleSelectedTopicIds = selectedTopicIds.filter(getAssessmentEligibility);
 
   // Each batch history includes its events across every assigned module.
   const filteredHistory = useMemo(() => {
@@ -346,7 +320,7 @@ export const SyllabusTracker: React.FC = () => {
   // If NO approved batches exist in the system yet:
   if (approvedBatches.length === 0) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-2">
         <div>
           <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
             Syllabus progress is gated by schedule confirmation.
@@ -644,7 +618,6 @@ export const SyllabusTracker: React.FC = () => {
   const batchPercentage = Math.round((completedForThisBatch / totalTopics) * 100);
 
   const batchDisplayName = `${currentBatch.batch} (${currentBatch.startTime} – ${currentBatch.endTime})`;
-
   return (
     <div className="space-y-6">
       {/* Top Navigation & Back Button */}
@@ -739,6 +712,26 @@ export const SyllabusTracker: React.FC = () => {
               <span>{completedForThisBatch} Topics Completed</span>
               <span>{totalTopics - completedForThisBatch} Remaining of {totalTopics}</span>
             </div>
+            {moduleFinanceSubmission ? (
+              <div className="mt-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs text-rose-900">
+                <Building2 className="mt-0.5 h-4 w-4 shrink-0 text-rose-800" />
+                <div>
+                  <p className="font-bold">Submitted for Finance Verification</p>
+                  <p className="mt-0.5 text-[11px] text-rose-800">
+                    {formatReadableDate(moduleFinanceSubmission.displayDate)} · {new Date(moduleFinanceSubmission.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                  </p>
+                </div>
+              </div>
+            ) : moduleReadyForFinanceVerification ? (
+              <button
+                type="button"
+                onClick={() => setIsFinanceSubmissionModalOpen(true)}
+                className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-rose-800 bg-rose-900 px-3 py-2.5 text-xs font-bold text-white transition-colors hover:bg-rose-800 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 sm:w-auto"
+              >
+                <Building2 className="h-4 w-4" />
+                Module Completed
+              </button>
+            ) : null}
           </div>
         </div>
 
@@ -808,8 +801,7 @@ export const SyllabusTracker: React.FC = () => {
           inert={!isChecklistExpanded}
         >
           <div className="accordion-collapse-inner">
-            {/* Toolbar: Search, Select All, Submit */}
-            <div className="p-4 border-b border-slate-100 bg-white flex flex-wrap items-center justify-between gap-3">
+            <div className="p-4 border-b border-slate-100 bg-white">
               {/* Search */}
               <div className="relative w-full sm:w-64">
                 <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
@@ -822,48 +814,6 @@ export const SyllabusTracker: React.FC = () => {
                 />
               </div>
 
-              {/* Actions & Submit Button */}
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 text-xs">
-                  <button
-                    type="button"
-                    onClick={handleSelectAllRemaining}
-                    disabled={isCurrentContextMissed}
-                    className="text-indigo-600 hover:text-indigo-800 disabled:opacity-50 font-medium cursor-pointer"
-                  >
-                    Select All Remaining
-                  </button>
-                  {selectedTopicIds.length > 0 && (
-                    <>
-                      <span className="text-slate-300">·</span>
-                      <button
-                        type="button"
-                        onClick={handleClearSelection}
-                        className="text-slate-500 hover:text-slate-700 font-medium cursor-pointer"
-                      >
-                        Clear ({selectedTopicIds.length})
-                      </button>
-                    </>
-                  )}
-                </div>
-
-                {selectedTopicIds.length > 0 && (
-                  <span className="text-xs font-semibold text-indigo-700 font-mono-numbers">
-                    {selectedTopicIds.length} topic{selectedTopicIds.length > 1 ? 's' : ''} selected
-                  </span>
-                )}
-
-                {eligibleSelectedTopicIds.length > 0 && !isCurrentContextMissed && (
-                  <button
-                    onClick={handleSaveTopics}
-                    className="px-4 py-2 text-xs font-semibold rounded-xl flex items-center gap-2 transition-all shadow-xs bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer"
-                    title="Submit only the selected topics that passed every student's assessment"
-                  >
-                    <Save className="w-4 h-4" />
-                    <span>Submit Updates</span>
-                  </button>
-                )}
-              </div>
             </div>
 
             {/* Filter Tabs */}
@@ -903,7 +853,16 @@ export const SyllabusTracker: React.FC = () => {
             <div className="divide-y divide-slate-100 max-h-[520px] overflow-y-auto">
               {filteredTopics.map((topic) => {
                 const isSavedCompleted = activeBatchCompletedTopicIds.includes(topic.id);
-                const isCurrentlySelected = selectedTopicIds.includes(topic.id);
+                const completionEvent = completionEventByTopic.get(topic.id);
+                const topicCompletedDate = completionEvent?.displayDate || topic.completedDate;
+                const notesAvailability = getTopicNotesAvailability(
+                  getScheduleBatchId(currentBatch),
+                  module.id,
+                  topic.id
+                );
+                const currentNotes = notesAvailability.status === 'Notes Uploaded'
+                  ? notesAvailability.notes
+                  : undefined;
                 const attempts = getTopicAssessments(topic.id);
                 const latestAssessment = attempts[0];
                 const isAssessmentEligible = getAssessmentEligibility(topic.id);
@@ -927,7 +886,7 @@ export const SyllabusTracker: React.FC = () => {
                             ? 'Assessment In Progress'
                             : latestAssessment?.status === 'Sent'
                               ? 'MCQ Sent'
-                              : 'Pending';
+                              : 'Assessment Pending';
                 const topicStatusClass = topicStatus === 'Completed' || topicStatus === 'Eligible for Completion'
                   ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                   : topicStatus === 'Requires Retake'
@@ -946,14 +905,15 @@ export const SyllabusTracker: React.FC = () => {
                   : null;
                 const aboveThresholdCount = submittedResults.filter((student) => ((student.score || 0) / 10) * 100 > 75).length;
                 const atOrBelowThresholdCount = submittedResults.length - aboveThresholdCount;
+                const resultsThroughSelectedAttempt = getQualifyingAssessmentResults(
+                  attempts.filter((assessment) =>
+                    assessment.attempt <= (selectedAssessment?.attempt || 0)
+                  )
+                );
                 const selectedAttemptEligible = Boolean(
                   selectedAssessment &&
                   selectedAssessment.status === 'Completed' &&
-                  selectedAssessment.students.length === currentBatch.students.length &&
-                  currentBatch.students.every((student) => {
-                    const result = selectedAssessment.students.find((item) => item.studentId === student.id);
-                    return result?.score !== null && result?.score !== undefined && (result.score / 10) * 100 > 75;
-                  })
+                  currentBatch.students.every((student) => resultsThroughSelectedAttempt.has(student.id))
                 );
                 const panelStatus = selectedAssessment?.classAgainStartedAt
                   ? 'Class Being Taken Again'
@@ -975,13 +935,10 @@ export const SyllabusTracker: React.FC = () => {
                 return (
                   <div key={topic.id}>
                     <div
-                      onClick={() => toggleTopicSelection(topic.id, isSavedCompleted)}
                       className={`syllabus-topic-row p-3.5 sm:px-5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors ${
                         isSavedCompleted
-                          ? 'bg-slate-50/50 cursor-default opacity-85'
-                          : isCurrentContextMissed
-                            ? 'opacity-50 cursor-not-allowed'
-                            : 'hover:bg-indigo-50/40 cursor-pointer'
+                          ? 'bg-slate-50/50 opacity-85'
+                          : 'hover:bg-indigo-50/40'
                       }`}
                     >
                       <div className="flex items-start gap-3.5 min-w-0">
@@ -990,12 +947,8 @@ export const SyllabusTracker: React.FC = () => {
                             <div className="w-5 h-5 rounded-md bg-emerald-600 text-white flex items-center justify-center shadow-2xs">
                               <CheckSquare className="w-3.5 h-3.5" />
                             </div>
-                          ) : isCurrentlySelected ? (
-                            <div className="w-5 h-5 rounded-md bg-indigo-600 text-white flex items-center justify-center shadow-2xs">
-                              <CheckSquare className="w-3.5 h-3.5" />
-                            </div>
                           ) : (
-                            <div className="w-5 h-5 rounded-md border-2 border-slate-300 hover:border-indigo-400 bg-white" />
+                            <div className="w-5 h-5 rounded-md border-2 border-slate-300 bg-white" />
                           )}
                         </div>
 
@@ -1006,19 +959,51 @@ export const SyllabusTracker: React.FC = () => {
                           <span className={`text-xs font-medium ${isSavedCompleted ? 'text-slate-700' : 'text-slate-900 font-semibold'}`}>
                             {topic.title}
                           </span>
-                          {isSavedCompleted && topic.completedDate && (
+                          {isSavedCompleted && topicCompletedDate && (
                             <span className="ml-2 text-[11px] font-semibold text-emerald-700">
-                              Completed {formatReadableDate(topic.completedDate)}
+                              Completed {formatReadableDate(topicCompletedDate)}
                             </span>
                           )}
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-2 sm:justify-end" onClick={(event) => event.stopPropagation()}>
+                      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                         <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${topicStatusClass}`}>
                           {topicStatus}
                         </span>
-                        {isCurrentlySelected && !isSavedCompleted && (
+                        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          {notesAvailability.status === 'Notes Uploaded' && currentNotes ? (
+                            <>
+                              <span className="inline-flex max-w-full items-center gap-1 text-[10px] text-slate-600" title={currentNotes.fileName}>
+                                <FileText className="h-3 w-3 shrink-0 text-emerald-700" />
+                                <span className="max-w-36 truncate">{currentNotes.fileName}</span>
+                                <span className="whitespace-nowrap text-slate-400">
+                                  · {new Date(currentNotes.lastUpdatedAt).toLocaleString()}
+                                </span>
+                              </span>
+                              <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">
+                                Notes Uploaded
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => { void downloadTopicNotes(currentNotes, getScheduleBatchId(currentBatch)); }}
+                                className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-emerald-800 hover:bg-emerald-50"
+                              >
+                                <Download className="h-3 w-3" />
+                                Download Notes
+                              </button>
+                            </>
+                          ) : notesAvailability.status === 'Notes Pending' ? (
+                            <span className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] font-semibold text-amber-800">
+                              Notes Pending
+                            </span>
+                          ) : (
+                            <span className="rounded-md border border-slate-200 bg-slate-100 px-2 py-1 text-[10px] font-semibold text-slate-600">
+                              Notes Locked
+                            </span>
+                          )}
+                        </div>
+                        {!isSavedCompleted && (
                           <>
                             <button
                               type="button"
@@ -1064,9 +1049,6 @@ export const SyllabusTracker: React.FC = () => {
                             )}
                           </>
                         )}
-                        {!isSavedCompleted && isCurrentlySelected && !isAssessmentEligible && (
-                          <span className="text-[10px] font-medium text-slate-500">Selected</span>
-                        )}
                       </div>
                     </div>
 
@@ -1100,7 +1082,7 @@ export const SyllabusTracker: React.FC = () => {
                         <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
                           {[
                             ['Questions', selectedAssessment.questions.length],
-                            ['Batch students', selectedAssessment.students.length],
+                            ['Students in attempt', selectedAssessment.students.length],
                             ['Submitted', submittedResults.length],
                             ['Not submitted', pendingResults],
                             ['Batch score', averagePercentage === null ? '—' : `${averagePercentage}%`],
@@ -1194,7 +1176,7 @@ export const SyllabusTracker: React.FC = () => {
                         </div>
                         {selectedAssessment.status === 'Completed' && !selectedAttemptEligible && (
                           <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800">
-                            Every student must submit and score above 75%. This topic cannot be submitted as completed.
+                            Every student in the batch must submit and score above 75%. A failed result requires the existing class retake and MCQ retest.
                           </p>
                         )}
                       </div>
@@ -1321,7 +1303,7 @@ export const SyllabusTracker: React.FC = () => {
 
             {filteredHistory.length === 0 ? (
               <div className="p-8 text-center text-slate-500 text-xs">
-                No syllabus events logged for this batch yet. Select a topic, send its MCQ assessment, and submit it after every student scores above 75%.
+                No syllabus events logged for this batch yet. Assessment results are recorded per student and qualifying topics are completed automatically.
               </div>
             ) : (
               <div className="overflow-x-auto">
@@ -1340,11 +1322,23 @@ export const SyllabusTracker: React.FC = () => {
                       <tr key={event.id} className="hover:bg-slate-50/70 transition-colors">
                         <td className="py-2.5 px-4 font-mono-numbers text-slate-600 font-medium whitespace-nowrap">
                           {formatReadableDate(event.displayDate)}
+                          {event.eventType === 'Topic Completed' ||
+                          event.eventType === 'Topic Notes Uploaded' ||
+                          event.eventType === 'Topic Notes Updated' ||
+                          event.eventType === 'Topic Notes Released' ? (
+                            <span className="mt-0.5 block text-[11px] text-slate-400">
+                              {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                            </span>
+                          ) : null}
                         </td>
                         <td className="py-2.5 px-3 whitespace-nowrap">
                           <span className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-semibold ${
                             event.eventType === 'Topic Completed'
                               ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                              : event.eventType === 'Topic Notes Uploaded' || event.eventType === 'Topic Notes Updated'
+                                ? 'border-rose-200 bg-rose-50 text-rose-800'
+                                : event.eventType === 'Topic Notes Released'
+                                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                               : event.eventType === 'Topic Requires Retake' || event.eventType === 'Class Not Conducted'
                                 ? 'border-rose-200 bg-rose-50 text-rose-700'
                                 : event.eventType === 'Topic Being Taken Again'
@@ -1353,18 +1347,25 @@ export const SyllabusTracker: React.FC = () => {
                           }`}>
                             {event.eventType === 'Topic Completed'
                               ? <CheckCircle2 className="h-3.5 w-3.5" />
+                              : event.eventType === 'Topic Notes Uploaded' ||
+                              event.eventType === 'Topic Notes Updated' ||
+                              event.eventType === 'Topic Notes Released'
+                                ? <FileText className="h-3.5 w-3.5" />
                               : event.eventType === 'Class Not Conducted' || event.eventType === 'Topic Requires Retake'
                                 ? <AlertTriangle className="h-3.5 w-3.5" />
                                 : event.eventType === 'Topic Being Taken Again'
                                   ? <RotateCcw className="h-3.5 w-3.5" />
                                   : <BookOpen className="h-3.5 w-3.5" />}
-                            <span>{event.eventType === 'Topic Completed' ? 'Syllabus Topic Completed and Submitted to Admin' : event.eventType}</span>
+                            <span>{event.eventType}</span>
                           </span>
                         </td>
                         <td className="py-2.5 px-4 text-slate-900 font-medium">
                           <div>
                             <span className="block text-[11px] text-slate-500 font-semibold mb-0.5">
                               {event.moduleName}
+                            </span>
+                            <span className="block text-[11px] text-slate-400 font-semibold mb-0.5">
+                              {event.batchName || currentBatch.batch}
                             </span>
                             {event.topicName ? (
                               <>
@@ -1442,6 +1443,45 @@ export const SyllabusTracker: React.FC = () => {
         moduleName={rosterBatch?.moduleName || ''}
         batch={rosterBatch?.batch || ''}
       />
+
+      <Modal
+        isOpen={isFinanceSubmissionModalOpen}
+        onClose={() => setIsFinanceSubmissionModalOpen(false)}
+        ariaLabel="Confirm Finance module verification submission"
+      >
+        <div className="flex items-start gap-3 border-b border-rose-200 bg-rose-50/70 p-5">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-rose-900">
+            <Building2 className="h-5 w-5" />
+          </span>
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">Submit Module for Verification</h2>
+            <p className="mt-1 text-xs leading-relaxed text-slate-600">
+              You have successfully completed all topics in this module for this batch. Do you want to submit this module for Finance Department verification?
+            </p>
+            <p className="mt-2 text-[11px] font-semibold text-rose-900">
+              {module.name} · {currentBatch.batch} · {currentBatch.batchId || getScheduleBatchId(currentBatch)}
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-col-reverse gap-2 p-5 sm:flex-row sm:justify-end">
+          <button
+            type="button"
+            onClick={() => setIsFinanceSubmissionModalOpen(false)}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleFinanceSubmissionConfirm}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-rose-900 px-4 py-2 text-xs font-bold text-white hover:bg-rose-800"
+          >
+            <Check className="h-4 w-4" />
+            Confirm Submission
+          </button>
+        </div>
+      </Modal>
+
     </div>
   );
 };
