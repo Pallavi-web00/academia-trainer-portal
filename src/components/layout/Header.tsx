@@ -13,7 +13,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleDrawer,
   isDrawerOpen
 }) => {
-  const { trainer, activeRemindersCount, resetAllMockData } = useTrainer();
+  const { activeRemindersCount, resetAllMockData } = useTrainer();
   const location = useLocation();
 
   const getPageTitle = (pathname: string): { title: string; subtitle: string } => {
@@ -171,19 +171,6 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </Link>
 
-        {/* Trainer Avatar Pill */}
-        <Link
-          to="/profile"
-          className="flex items-center gap-2.5 pl-2 sm:pl-3 border-l border-slate-200 text-slate-700 hover:text-slate-900 group"
-          title="View profile"
-        >
-          <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 font-bold text-xs flex items-center justify-center border border-indigo-200 group-hover:bg-indigo-200 transition-colors">
-            {trainer.name.charAt(0)}
-          </div>
-          <span className="hidden sm:inline text-xs font-semibold group-hover:text-indigo-600 transition-colors">
-            {trainer.name}
-          </span>
-        </Link>
       </div>
     </header>
   );

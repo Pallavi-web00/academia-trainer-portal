@@ -50,9 +50,11 @@ import { getScheduledSessionId } from '../data/scheduleData';
 import { Modal } from '../components/common/Modal';
 import {
   areAllStudentsAssessmentQualified,
+  getTopicAssessmentAttempts,
   getQualifyingAssessmentResults,
   isModuleReadyForFinanceVerification
 } from '../utils/syllabusAssessment';
+import { getScheduleCompletionStatus } from '../utils/scheduleCompletion';
 
 export const SyllabusTracker: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -60,6 +62,8 @@ export const SyllabusTracker: React.FC = () => {
   const {
     module,
     schedules,
+    examinations,
+    examinationMarks,
     syllabusSessions,
     currentTime,
     activityHistory,
@@ -126,6 +130,17 @@ export const SyllabusTracker: React.FC = () => {
     if (!selectedBatchId) return null;
     return approvedBatches.find((b) => b.id === selectedBatchId) || null;
   }, [approvedBatches, selectedBatchId]);
+  const currentBatchCompletionStatus = useMemo(() => {
+    if (!currentBatch) return undefined;
+    return getScheduleCompletionStatus({
+      schedule: currentBatch,
+      modules: [module],
+      activityHistory,
+      assessments: syllabusAssessments,
+      examinations,
+      examinationMarks
+    });
+  }, [currentBatch, module, activityHistory, syllabusAssessments, examinations, examinationMarks]);
 
   // If a requested batch from URL is pending approval, detect it
   const unapprovedBatchRequested = useMemo(() => {
@@ -243,13 +258,12 @@ export const SyllabusTracker: React.FC = () => {
 
   const getTopicAssessments = (topicId: string) => {
     if (!currentBatch) return [];
-    return syllabusAssessments
-      .filter((assessment) =>
-        assessment.batchId === getScheduleBatchId(currentBatch) &&
-        assessment.moduleId === module.id &&
-        assessment.topicId === topicId
-      )
-      .sort((a, b) => b.attempt - a.attempt || b.sentAt.localeCompare(a.sentAt));
+    return getTopicAssessmentAttempts(
+      syllabusAssessments,
+      getScheduleBatchId(currentBatch),
+      module.id,
+      topicId
+    );
   };
 
   const getAssessmentEligibility = (topicId: string) => {
@@ -442,6 +456,15 @@ export const SyllabusTracker: React.FC = () => {
 
               const batchSubTitle = getBatchDaysDescription(batchItem.batch, batchItem.scheduledDays);
               const todayStatus = getTodaysSyllabusStatus(batchItem, schedules, activityHistory, currentTime);
+              const completionStatus = getScheduleCompletionStatus({
+                schedule: batchItem,
+                modules: [module],
+                activityHistory,
+                assessments: syllabusAssessments,
+                examinations,
+                examinationMarks
+              });
+              const batchExamination = completionStatus.examination;
 
               return (
                 <div
@@ -466,7 +489,27 @@ export const SyllabusTracker: React.FC = () => {
                         </span>
                       </div>
 
-                      <StatusBadge status={todayStatus} size="sm" />
+                      {completionStatus.isModuleCompleted ? (
+                        <div className="flex flex-col items-end gap-1">
+                          <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                            Class Completed
+                          </span>
+                          {batchExamination && (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                navigate(`/examinations?exam=${encodeURIComponent(batchExamination.id)}`);
+                              }}
+                              className="rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-900 hover:bg-rose-100"
+                            >
+                              {completionStatus.isExamCompleted ? 'Exam Completed' : 'Exam Scheduled'}
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <StatusBadge status={todayStatus} size="sm" />
+                      )}
                     </div>
 
                     {/* Schedule & Timing Info */}
@@ -514,9 +557,11 @@ export const SyllabusTracker: React.FC = () => {
                           <span>Session:</span>
                         </span>
                         <span className="font-semibold text-slate-800">
-                          {batchItem.approvalStatus === 'Approved' && (batchItem.startDate || batchItem.scheduledDate) <= getCurrentDateISO() && (batchItem.sessionNumber || 0) > 0
-                            ? `#${batchItem.sessionNumber} / ${batchItem.totalSessions}`
-                            : `0 / ${batchItem.totalSessions} (No classes conducted)`}
+                          {completionStatus.isModuleCompleted
+                            ? 'Module complete · no further classes'
+                            : batchItem.approvalStatus === 'Approved' && (batchItem.startDate || batchItem.scheduledDate) <= getCurrentDateISO() && (batchItem.sessionNumber || 0) > 0
+                              ? `#${batchItem.sessionNumber} / ${batchItem.totalSessions}`
+                              : `0 / ${batchItem.totalSessions} (No classes conducted)`}
                         </span>
                       </div>
                     </div>
@@ -605,6 +650,7 @@ export const SyllabusTracker: React.FC = () => {
           students={rosterBatch?.students || []}
           moduleName={rosterBatch?.moduleName || ''}
           batch={rosterBatch?.batch || ''}
+          onViewProfile={() => {}}
         />
       </div>
     );
@@ -616,6 +662,8 @@ export const SyllabusTracker: React.FC = () => {
   const completedForThisBatch = activeBatchCompletedTopicIds.length;
   const totalTopics = module.topics.length || 40;
   const batchPercentage = Math.round((completedForThisBatch / totalTopics) * 100);
+  const isCurrentBatchCompleted = currentBatchCompletionStatus?.isModuleCompleted === true;
+  const currentBatchExamination = currentBatchCompletionStatus?.examination;
 
   const batchDisplayName = `${currentBatch.batch} (${currentBatch.startTime} – ${currentBatch.endTime})`;
   return (
@@ -662,13 +710,15 @@ export const SyllabusTracker: React.FC = () => {
               <span>Session Date: {formatReadableDate(activeDateContext)}</span>
             </div>
 
-            <button
-              onClick={() => setIsMissedModalOpen(true)}
-              className="px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
-            >
-              <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-              <span>Class Not Conducted</span>
-            </button>
+            {!isCurrentBatchCompleted && (
+              <button
+                onClick={() => setIsMissedModalOpen(true)}
+                className="px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
+              >
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
+                <span>Class Not Conducted</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -679,17 +729,36 @@ export const SyllabusTracker: React.FC = () => {
               <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
                 {batchDisplayName}
               </h2>
-              <StatusBadge
-                status={getTodaysSyllabusStatus(currentBatch, schedules, activityHistory, currentTime)}
-                size="sm"
-              />
+              {isCurrentBatchCompleted ? (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                    Class Completed
+                  </span>
+                  {currentBatchExamination && (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/examinations?exam=${encodeURIComponent(currentBatchExamination.id)}`)}
+                      className="rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-900 hover:bg-rose-100"
+                    >
+                      {currentBatchCompletionStatus?.isExamCompleted ? 'Exam Completed' : 'Exam Scheduled'}
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <StatusBadge
+                  status={getTodaysSyllabusStatus(currentBatch, schedules, activityHistory, currentTime)}
+                  size="sm"
+                />
+              )}
             </div>
             <p className="text-xs text-slate-500 max-w-2xl leading-relaxed">
               {module.name} · Assigned Room: <strong className="text-slate-700">{currentBatch.roomOrLink}</strong> · Total Sessions:{' '}
               <strong className="text-slate-700">
-                {currentBatch.approvalStatus === 'Approved' && (currentBatch.startDate || currentBatch.scheduledDate) <= getCurrentDateISO() && (currentBatch.sessionNumber || 0) > 0
-                  ? `Session #${currentBatch.sessionNumber} of ${currentBatch.totalSessions}`
-                  : `0 / ${currentBatch.totalSessions} (No classes conducted)`}
+                {isCurrentBatchCompleted
+                  ? 'Module complete · no further classes'
+                  : currentBatch.approvalStatus === 'Approved' && (currentBatch.startDate || currentBatch.scheduledDate) <= getCurrentDateISO() && (currentBatch.sessionNumber || 0) > 0
+                    ? `Session #${currentBatch.sessionNumber} of ${currentBatch.totalSessions}`
+                    : `0 / ${currentBatch.totalSessions} (No classes conducted)`}
               </strong>.
             </p>
           </div>
@@ -709,8 +778,7 @@ export const SyllabusTracker: React.FC = () => {
               />
             </div>
             <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono-numbers">
-              <span>{completedForThisBatch} Topics Completed</span>
-              <span>{totalTopics - completedForThisBatch} Remaining of {totalTopics}</span>
+              <span>{completedForThisBatch} Topics Completed {totalTopics - completedForThisBatch} Remaining of {totalTopics}</span>
             </div>
             {moduleFinanceSubmission ? (
               <div className="mt-3 flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs text-rose-900">
@@ -736,7 +804,7 @@ export const SyllabusTracker: React.FC = () => {
         </div>
 
         {/* Notice if Class Was Not Conducted */}
-        {isCurrentContextMissed && (
+        {isCurrentContextMissed && !isCurrentBatchCompleted && (
           <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs flex items-start gap-2.5">
             <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600 mt-0.5" />
             <div>
@@ -1003,7 +1071,7 @@ export const SyllabusTracker: React.FC = () => {
                             </span>
                           )}
                         </div>
-                        {!isSavedCompleted && (
+                        {!isSavedCompleted && !isCurrentBatchCompleted && (
                           <>
                             <button
                               type="button"
@@ -1023,19 +1091,6 @@ export const SyllabusTracker: React.FC = () => {
                                       ? 'Send Retake MCQ'
                                       : 'Send MCQ'}
                             </button>
-                            {attempts.length > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setExpandedScoreTopicId(isScorePanelOpen ? null : topic.id);
-                                  setExpandedAssessmentId(isScorePanelOpen ? null : attempts[0].id);
-                                }}
-                                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
-                              >
-                                <Eye className="h-3 w-3" />
-                                {isScorePanelOpen ? 'Hide Scores' : 'View Scores'}
-                              </button>
-                            )}
                             {requiresRetake && (
                               <button
                                 type="button"
@@ -1048,6 +1103,19 @@ export const SyllabusTracker: React.FC = () => {
                               </button>
                             )}
                           </>
+                        )}
+                        {attempts.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExpandedScoreTopicId(isScorePanelOpen ? null : topic.id);
+                              setExpandedAssessmentId(isScorePanelOpen ? null : attempts[0].id);
+                            }}
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                          >
+                            <Eye className="h-3 w-3" />
+                            {isScorePanelOpen ? 'Hide Scores' : 'View Scores'}
+                          </button>
                         )}
                       </div>
                     </div>
@@ -1411,7 +1479,7 @@ export const SyllabusTracker: React.FC = () => {
 
       {/* Missed Class Modal */}
       <ClassNotConductedModal
-        isOpen={isMissedModalOpen}
+        isOpen={isMissedModalOpen && !isCurrentBatchCompleted}
         onClose={() => setIsMissedModalOpen(false)}
         moduleId={module.id}
         moduleName={module.name}
@@ -1442,6 +1510,7 @@ export const SyllabusTracker: React.FC = () => {
         students={rosterBatch?.students || []}
         moduleName={rosterBatch?.moduleName || ''}
         batch={rosterBatch?.batch || ''}
+        onViewProfile={() => {}}
       />
 
       <Modal

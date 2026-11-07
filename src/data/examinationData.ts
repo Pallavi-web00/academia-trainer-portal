@@ -52,7 +52,14 @@ export function getInitialAdminExaminations(schedules: ScheduleItem[]): AdminExa
       theory: { scheduledDate: '2026-11-10', scheduledTime: '10:00 AM', endTime: '12:00 PM', maxMarks: 100 },
       practical: { scheduledDate: '2026-11-12', scheduledTime: '10:00 AM', endTime: '12:00 PM', maxMarks: 100 },
       project: { scheduledDate: '2026-11-15', scheduledTime: '02:00 PM', endTime: '04:00 PM', maxMarks: 100 },
-      eligibleStudentIds: ['st-21', 'st-22', 'st-24', 'st-26', 'st-27', 'st-28'],
+      eligibleStudentIds: [
+        'STU-2026-1021',
+        'STU-2026-1022',
+        'STU-2026-1024',
+        'STU-2026-1026',
+        'STU-2026-1027',
+        'STU-2026-1028'
+      ],
       adminDetails: 'Sample Admin-published schedule for Everyday. This batch has completed every planned module topic and all students passed each topic MCQ.'
     },
     {
@@ -61,7 +68,14 @@ export function getInitialAdminExaminations(schedules: ScheduleItem[]): AdminExa
       theory: { scheduledDate: dateOnWeekday(4, 1), scheduledTime: '10:00 AM', maxMarks: 100 },
       practical: { scheduledDate: dateOnWeekday(8, 3), scheduledTime: '10:00 AM', maxMarks: 100 },
       project: { scheduledDate: dateOnWeekday(12, 5), scheduledTime: '02:00 PM', maxMarks: 100 },
-      eligibleStudentIds: ['st-01', 'st-02', 'st-03', 'st-04', 'st-06', 'st-08'],
+      eligibleStudentIds: [
+        'STU-2026-1001',
+        'STU-2026-1002',
+        'STU-2026-1003',
+        'STU-2026-1004',
+        'STU-2026-1006',
+        'STU-2026-1008'
+      ],
       adminDetails: 'Published by Admin. Mock schedule and eligibility list.'
     },
     {

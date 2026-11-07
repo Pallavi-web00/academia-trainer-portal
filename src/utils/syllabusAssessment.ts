@@ -1,5 +1,20 @@
 import { ScheduleItem, SyllabusActivityEvent, SyllabusAssessment } from '../types';
 
+export function getTopicAssessmentAttempts(
+  assessments: SyllabusAssessment[],
+  batchId: string,
+  moduleId: string,
+  topicId: string
+): SyllabusAssessment[] {
+  return assessments
+    .filter((assessment) =>
+      assessment.batchId === batchId &&
+      assessment.moduleId === moduleId &&
+      assessment.topicId === topicId
+    )
+    .sort((a, b) => b.attempt - a.attempt || b.sentAt.localeCompare(a.sentAt));
+}
+
 export function getQualifyingAssessmentResults(
   assessments: SyllabusAssessment[]
 ): Map<string, SyllabusAssessment['students'][number]> {
@@ -15,6 +30,35 @@ export function getQualifyingAssessmentResults(
       });
     });
   return resultsByStudent;
+}
+
+export function getStudentsRequiringNextAssessment(
+  students: ScheduleItem['students'],
+  previousAttempts: SyllabusAssessment[]
+): ScheduleItem['students'] {
+  const previouslyPassed = getQualifyingAssessmentResults(previousAttempts);
+  const latestAttempt = [...previousAttempts]
+    .sort((a, b) => b.attempt - a.attempt || b.sentAt.localeCompare(a.sentAt))[0];
+  const failedStudentIds = new Set(
+    latestAttempt?.status === 'Completed'
+      ? latestAttempt.students
+        .filter((result) =>
+          result.score !== null && (result.score / 10) * 100 <= 75
+        )
+        .map((result) => result.studentId)
+      : []
+  );
+  const seenStudentIds = new Set<string>();
+
+  return students.filter((student) => {
+    if (
+      seenStudentIds.has(student.id) ||
+      previouslyPassed.has(student.id) ||
+      (latestAttempt && !failedStudentIds.has(student.id))
+    ) return false;
+    seenStudentIds.add(student.id);
+    return true;
+  });
 }
 
 export function areAllStudentsAssessmentQualified(
@@ -85,6 +129,39 @@ export function isModuleReadyForFinanceVerification(input: {
       .sort((a, b) => b.attempt - a.attempt || b.sentAt.localeCompare(a.sentAt));
     return areAllStudentsAssessmentQualified(topicAssessments[0], students, topicAssessments);
   });
+}
+
+export function isModuleSuccessfullyCompletedForBatch(input: {
+  topicIds: string[];
+  schedule: ScheduleItem;
+  activityHistory: SyllabusActivityEvent[];
+  assessments: SyllabusAssessment[];
+}): boolean {
+  const { topicIds, schedule, activityHistory, assessments } = input;
+  const batchId = schedule.batchId || schedule.id;
+  const completedTopicEvents = new Set(
+    activityHistory
+      .filter((event) =>
+        event.batchId === batchId &&
+        event.moduleId === schedule.moduleId &&
+        event.eventType === 'Topic Completed' &&
+        event.savedStatus === 'Saved' &&
+        Boolean(event.topicId)
+      )
+      .flatMap((event) => event.topicId ? [event.topicId] : [])
+  );
+
+  return topicIds.length > 0 &&
+    topicIds.every((topicId) => completedTopicEvents.has(topicId)) &&
+    isModuleReadyForFinanceVerification({
+      topicIds,
+      batchId,
+      moduleId: schedule.moduleId,
+      students: schedule.students,
+      completedTopicIds: schedule.completedTopicIds || [],
+      activityHistory,
+      assessments
+    });
 }
 
 export function hasModuleFinanceSubmission(

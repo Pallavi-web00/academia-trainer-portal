@@ -351,6 +351,7 @@ export const SessionHistory: React.FC = () => {
         students={rosterSession?.students || []}
         moduleName={rosterSession?.moduleName || ''}
         batch={rosterSession?.batch || ''}
+        onViewProfile={() => {}}
       />
     </div>
   );

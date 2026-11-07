@@ -33,6 +33,7 @@ import {
 import { StudentListModal } from '../components/modals/StudentListModal';
 import { ScheduleDetailsModal } from '../components/modals/ScheduleDetailsModal';
 import { ChangeRequestModal } from '../components/modals/ChangeRequestModal';
+import { getScheduleCompletionStatus } from '../utils/scheduleCompletion';
 
 const AnimatedMetric: React.FC<{ value: number }> = ({ value }) => {
   const [displayedValue, setDisplayedValue] = useState(0);
@@ -63,8 +64,12 @@ export const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const {
     schedules,
+    modules,
     currentTime,
     activityHistory,
+    syllabusAssessments,
+    examinations,
+    examinationMarks,
     module,
     pendingApprovalsCount,
     completedSessionsCount,
@@ -92,19 +97,35 @@ export const Dashboard: React.FC = () => {
   const activeDayName = getDayOfWeekName(activeDate);
   const isViewingToday = activeDate === todayStr;
 
+  const completedModuleSchedules = useMemo(
+    () => schedules.filter((schedule) => getScheduleCompletionStatus({
+      schedule,
+      modules,
+      activityHistory,
+      assessments: syllabusAssessments,
+      examinations,
+      examinationMarks
+    }).isModuleCompleted),
+    [schedules, modules, activityHistory, syllabusAssessments, examinations, examinationMarks]
+  );
+  const activeSchedules = useMemo(() => {
+    const completedScheduleIds = new Set(completedModuleSchedules.map((schedule) => schedule.id));
+    return schedules.filter((schedule) => !completedScheduleIds.has(schedule.id));
+  }, [schedules, completedModuleSchedules]);
+
   // Weekly days are explicit on each mock schedule so custom patterns need no name-based assumptions.
   const todayClasses = useMemo(() => {
-    return schedules.filter(
+    return activeSchedules.filter(
       (s) => activeDate >= s.startDate && isBatchScheduledOnDate(s.batch, activeDate, s.scheduledDays)
     );
-  }, [schedules, activeDate]);
+  }, [activeSchedules, activeDate]);
 
   // Batches not scheduled on this day of the week
   const offDayClasses = useMemo(() => {
-    return schedules.filter(
+    return activeSchedules.filter(
       (s) => activeDate >= s.startDate && !isBatchScheduledOnDate(s.batch, activeDate, s.scheduledDays)
     );
-  }, [schedules, activeDate]);
+  }, [activeSchedules, activeDate]);
 
   const activeBatchNames = todayClasses.map((schedule) => schedule.batch).join(' + ') || 'No scheduled batches';
   const dayScheduleOptions = useMemo(() => {
@@ -116,7 +137,7 @@ export const Dashboard: React.FC = () => {
       const date = new Date(weekStart);
       date.setDate(weekStart.getDate() + dayIndex);
       const dateISO = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-      const batches = schedules.filter(
+      const batches = activeSchedules.filter(
         (schedule) =>
           dateISO >= schedule.startDate &&
           isBatchScheduledOnDate(schedule.batch, dateISO, schedule.scheduledDays)
@@ -127,7 +148,7 @@ export const Dashboard: React.FC = () => {
         label: `${dayName} (${batches.map((schedule) => schedule.batch).join(' + ') || 'No classes'})`
       };
     });
-  }, [activeDate, schedules]);
+  }, [activeDate, activeSchedules]);
 
   // Active overdue reminders
   const overdueReminders = notifications.filter(
@@ -192,10 +213,7 @@ export const Dashboard: React.FC = () => {
           <div className="mt-1 text-[11px] text-indigo-700 font-semibold truncate">
             {activeBatchNames}
           </div>
-          <div className="mt-2 flex items-center gap-1 text-xs text-indigo-600 font-medium group-hover:translate-x-0.5 transition-transform">
-            <span>View day roster</span>
-            <ArrowRight className="w-3.5 h-3.5" />
-          </div>
+          
         </div>
 
         {/* Card 2: Free Hours & Admin Tasks */}
@@ -446,6 +464,50 @@ export const Dashboard: React.FC = () => {
                 </div>
               </div>
             )}
+
+            {completedModuleSchedules.length > 0 && (
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50/50 p-3.5">
+                <h3 className="text-xs font-bold text-emerald-900">Completed Modules · No Further Classes Scheduled</h3>
+                <div className="mt-2 space-y-2">
+                  {completedModuleSchedules.map((schedule) => {
+                    const status = getScheduleCompletionStatus({
+                      schedule,
+                      modules,
+                      activityHistory,
+                      assessments: syllabusAssessments,
+                      examinations,
+                      examinationMarks
+                    });
+                    const exam = status.examination;
+                    return (
+                      <div
+                        key={`${schedule.id}-${schedule.moduleId}`}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-emerald-100 bg-white px-3 py-2"
+                      >
+                        <div>
+                          <p className="text-xs font-semibold text-slate-900">{schedule.batch} · {schedule.moduleName}</p>
+                          <p className="text-[10px] text-slate-500">{schedule.students.length} students</p>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
+                            Class Completed
+                          </span>
+                          {exam && (
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/examinations?exam=${encodeURIComponent(exam.id)}`)}
+                              className="rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-900 hover:bg-rose-100"
+                            >
+                              {status.isExamCompleted ? 'Exam Completed' : 'Exam Scheduled'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Admin Assigned Tasks During Trainer Free Hours */}
@@ -659,6 +721,7 @@ export const Dashboard: React.FC = () => {
         students={selectedStudentSchedule?.students || []}
         moduleName={selectedStudentSchedule?.moduleName || ''}
         batch={selectedStudentSchedule?.batch || ''}
+        onViewProfile={() => {}}
       />
 
       <ScheduleDetailsModal

@@ -43,6 +43,18 @@ export function isExaminationMarksEntryOpen(
   return Boolean(earliest && now.getTime() >= earliest.getTime());
 }
 
+export function isExaminationCompleted(
+  examination: AdminExamination,
+  records: ExaminationMarksRecord[]
+): boolean {
+  return records.some((record) =>
+    record.examinationId === examination.id &&
+    record.batchId === examination.batchId &&
+    record.moduleId === examination.moduleId &&
+    record.status === 'Submitted'
+  );
+}
+
 export function sanitizePersistedExaminationMarks(
   examinations: AdminExamination[],
   records: ExaminationMarksRecord[],

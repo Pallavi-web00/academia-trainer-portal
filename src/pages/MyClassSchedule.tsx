@@ -30,7 +30,9 @@ import {
   getSessionSyllabusStatus,
   getScheduleBatchId
 } from '../utils/dateTimeUtils';
+import { getScheduleCompletionStatus } from '../utils/scheduleCompletion';
 import { StudentListModal } from '../components/modals/StudentListModal';
+import { StudentProfileModal } from '../components/modals/StudentProfileModal';
 import { ScheduleDetailsModal } from '../components/modals/ScheduleDetailsModal';
 import { ChangeRequestModal } from '../components/modals/ChangeRequestModal';
 
@@ -40,8 +42,12 @@ export const MyClassSchedule: React.FC = () => {
     schedules,
     syllabusSessions,
     module,
+    modules,
     currentTime,
     activityHistory,
+    examinations,
+    examinationMarks,
+    syllabusAssessments,
     approveSchedule,
     requestScheduleChange
   } = useTrainer();
@@ -55,6 +61,7 @@ export const MyClassSchedule: React.FC = () => {
 
   // Modals state
   const [rosterSchedule, setRosterSchedule] = useState<ScheduleItem | null>(null);
+  const [profileStudent, setProfileStudent] = useState<ScheduleItem['students'][number] | null>(null);
   const [detailsSchedule, setDetailsSchedule] = useState<ScheduleItem | null>(null);
   const [changeSchedule, setChangeSchedule] = useState<ScheduleItem | null>(null);
 
@@ -65,7 +72,7 @@ export const MyClassSchedule: React.FC = () => {
     const uniqueBatchRows: ScheduleItem[] = [];
 
     for (const item of schedules) {
-      const key = `${item.batch}-${item.startTime}`;
+      const key = `${getScheduleBatchId(item)}-${item.moduleId}`;
       if (!seenBatches.has(key)) {
         seenBatches.add(key);
         uniqueBatchRows.push(item);
@@ -73,6 +80,20 @@ export const MyClassSchedule: React.FC = () => {
     }
     return uniqueBatchRows;
   }, [schedules]);
+
+  const completionStatusBySchedule = useMemo(() => {
+    return new Map(schedules.map((schedule) => [
+      schedule.id,
+      getScheduleCompletionStatus({
+        schedule,
+        modules,
+        activityHistory,
+        assessments: syllabusAssessments,
+        examinations,
+        examinationMarks
+      })
+    ] as const));
+  }, [schedules, modules, activityHistory, syllabusAssessments, examinations, examinationMarks]);
 
   // Extract unique batch options for filter dropdown
   const uniqueBatchOptions = useMemo(() => {
@@ -115,6 +136,7 @@ export const MyClassSchedule: React.FC = () => {
     selectedStatus !== 'ALL' ||
     startDateFilter !== '';
   const timelineBatches = batchList
+    .filter((item) => !completionStatusBySchedule.get(item.id)?.isModuleCompleted)
     .slice()
     .sort((a, b) => parseTimeToMinutes(a.startTime) - parseTimeToMinutes(b.startTime));
   const renderTimelineBatch = (item: ScheduleItem) => (
@@ -289,6 +311,9 @@ export const MyClassSchedule: React.FC = () => {
                     const batchStartDate = item.startDate || item.scheduledDate;
                     const hasStarted = batchStartDate <= todayStr;
                     const isApproved = item.approvalStatus === 'Approved';
+                    const completionStatus = completionStatusBySchedule.get(item.id);
+                    const scheduledExamination = completionStatus?.examination;
+                    const isModuleCompleted = completionStatus?.isModuleCompleted === true;
                     const todaySyllabusStatus = getSessionSyllabusStatus(
                       item,
                       activityHistory,
@@ -356,7 +381,11 @@ export const MyClassSchedule: React.FC = () => {
 
                         {/* 6. Session: Displays 0/totalSessions & No classes conducted if unapproved or not started */}
                         <td className="py-3 px-3 whitespace-nowrap">
-                          {completedSessions > 0 ? (
+                          {isModuleCompleted ? (
+                            <div className="text-[11px] font-medium text-emerald-700">
+                              Module complete · no further classes
+                            </div>
+                          ) : completedSessions > 0 ? (
                             <div>
                               <div className="font-mono-numbers font-bold text-slate-900">
                                 {completedSessions} / {item.totalSessions}
@@ -390,31 +419,55 @@ export const MyClassSchedule: React.FC = () => {
                         <td className="py-3 px-3 whitespace-nowrap">
                           <div className="space-y-1">
                             <StatusBadge status={item.approvalStatus} size="sm" />
+                            {isModuleCompleted && (
+                              <div className="flex flex-wrap items-center gap-1">
+                                <span className="inline-flex items-center gap-1 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">
+                                  <Check className="h-3.5 w-3.5 text-emerald-600" />
+                                  Class Completed
+                                </span>
+                                {scheduledExamination && (
+                                  <button
+                                    type="button"
+                                    onClick={() => navigate(`/examinations?exam=${encodeURIComponent(scheduledExamination.id)}`)}
+                                    aria-label={`View examination schedule for ${item.batch} - ${item.moduleName}`}
+                                    title={`View Admin-published examination ${scheduledExamination.id}`}
+                                    className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-900 transition-colors hover:bg-rose-100 hover:text-rose-950"
+                                  >
+                                    {completionStatus?.isExamCompleted ? 'Exam Completed' : 'Exam Scheduled'}
+                                    {completionStatus?.isExamCompleted
+                                      ? <Check className="h-3 w-3" />
+                                      : <ArrowUpRight className="h-3 w-3" />}
+                                  </button>
+                                )}
+                              </div>
+                            )}
 
                             {/* "this update will be seen in the table in the my class schedule menu, this happens only after the trainer approves the syllabus in the my class schedule menu." */}
-                            {isApproved ? (
-                              <div className="flex items-center gap-1 text-[11px] font-mono-numbers">
-                                <StatusBadge status={todaySyllabusStatus} size="sm" />
-                                {wasMissedToday && (
-                                  <StatusBadge status="Class Not Conducted" size="sm" />
-                                )}
-                                {todaySyllabusStatus !== 'No Class Today' &&
-                                  todaySyllabusStatus !== 'Updated' &&
-                                  !wasMissedToday && (
-                                    <button
-                                      onClick={() => navigate(`/syllabus?session=${item.id}`)}
-                                      className="text-indigo-600 hover:text-indigo-800 hover:underline font-medium flex items-center gap-0.5 cursor-pointer"
-                                    >
-                                      <span>Update Syllabus</span>
-                                      <ArrowUpRight className="w-2.5 h-2.5" />
-                                    </button>
+                            {!isModuleCompleted && (
+                              isApproved ? (
+                                <div className="flex items-center gap-1 text-[11px] font-mono-numbers">
+                                  <StatusBadge status={todaySyllabusStatus} size="sm" />
+                                  {wasMissedToday && (
+                                    <StatusBadge status="Class Not Conducted" size="sm" />
                                   )}
-                              </div>
-                            ) : (
-                              <div className="text-[10px] text-amber-700 flex items-center gap-1 font-medium">
-                                <Lock className="w-2.5 h-2.5 shrink-0 text-amber-600" />
-                                <span>Tracker Locked</span>
-                              </div>
+                                  {todaySyllabusStatus !== 'No Class Today' &&
+                                    todaySyllabusStatus !== 'Updated' &&
+                                    !wasMissedToday && (
+                                      <button
+                                        onClick={() => navigate(`/syllabus?session=${item.id}`)}
+                                        className="text-indigo-600 hover:text-indigo-800 hover:underline font-medium flex items-center gap-0.5 cursor-pointer"
+                                      >
+                                        <span>Update Syllabus</span>
+                                        <ArrowUpRight className="w-2.5 h-2.5" />
+                                      </button>
+                                    )}
+                                </div>
+                              ) : (
+                                <div className="text-[10px] text-amber-700 flex items-center gap-1 font-medium">
+                                  <Lock className="w-2.5 h-2.5 shrink-0 text-amber-600" />
+                                  <span>Tracker Locked</span>
+                                </div>
+                              )
                             )}
                           </div>
                         </td>
@@ -422,14 +475,6 @@ export const MyClassSchedule: React.FC = () => {
                         {/* 8. Actions */}
                         <td className="py-3 px-4 text-right whitespace-nowrap">
                           <div className="inline-flex items-center gap-1.5 justify-end">
-                            {/* View Details */}
-                            <button
-                              onClick={() => setDetailsSchedule(item)}
-                              className="p-1.5 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
-                              title="View Details"
-                            >
-                              <Eye className="w-4 h-4" />
-                            </button>
 
                             {/* Approve (if Pending) -> Unlocks batch in Syllabus Tracker */}
                             {item.approvalStatus === 'Pending' && (
@@ -444,7 +489,7 @@ export const MyClassSchedule: React.FC = () => {
                             )}
 
                             {/* Request Change */}
-                            {item.approvalStatus !== 'Change Requested' ? (
+                            {!isModuleCompleted && item.approvalStatus !== 'Change Requested' ? (
                               <button
                                 onClick={() => setChangeSchedule(item)}
                                 className="px-2.5 py-1 text-xs font-semibold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 rounded-lg transition-colors cursor-pointer"
@@ -452,14 +497,14 @@ export const MyClassSchedule: React.FC = () => {
                               >
                                 Request Change
                               </button>
-                            ) : (
+                            ) : !isModuleCompleted ? (
                               <button
                                 onClick={() => setDetailsSchedule(item)}
                                 className="px-2 py-1 text-[11px] font-medium text-slate-500 bg-slate-100 rounded-md cursor-pointer"
                               >
                                 Requested
                               </button>
-                            )}
+                            ) : null}
                           </div>
                         </td>
                       </tr>
@@ -563,6 +608,15 @@ export const MyClassSchedule: React.FC = () => {
         students={rosterSchedule?.students || []}
         moduleName={rosterSchedule?.moduleName || ''}
         batch={rosterSchedule?.batch || ''}
+        onViewProfile={(student) => {
+          setProfileStudent(student);
+        }}
+      />
+
+      <StudentProfileModal
+        isOpen={Boolean(profileStudent)}
+        onClose={() => setProfileStudent(null)}
+        student={profileStudent}
       />
 
       <ScheduleDetailsModal

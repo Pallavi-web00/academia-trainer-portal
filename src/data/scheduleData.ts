@@ -5,6 +5,7 @@ import {
   AdminTask,
   ScheduledSyllabusSession
 } from '../types';
+import { generateAdmissionNumber } from '../utils/studentId';
 import { initialModulesData } from './modulesData';
 import {
   findScheduleConflicts,
@@ -13,41 +14,93 @@ import {
   validateTrainerWorkingSchedule
 } from '../utils/dateTimeUtils';
 
+const studentPhotoPool = [
+  'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=500&q=80',
+  'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=500&q=80',
+  'https://images.unsplash.com/photo-1506794778202-cad84cf45f1d?auto=format&fit=crop&w=500&q=80',
+  'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&w=500&q=80',
+  'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&w=500&q=80',
+  'https://images.unsplash.com/photo-1504593811423-6dd665756598?auto=format&fit=crop&w=500&q=80',
+  'https://images.unsplash.com/photo-1504257432389-52343af06ae3?auto=format&fit=crop&w=500&q=80',
+  'https://images.unsplash.com/photo-1524504388940-b1c1722653e1?auto=format&fit=crop&w=500&q=80'
+];
+
+const buildStudent = (
+  name: string,
+  attendancePercent: number,
+  sequence: number,
+  batchName: string,
+  courseName = 'AI'
+): Student => {
+  const id = `STU-2026-${String(1001 + sequence).padStart(4, '0')}`;
+  const priorAdmissionNumbers = Array.from({ length: sequence }, (_, index) => `ADM-2026-${String(index + 1).padStart(4, '0')}`);
+  const admissionNumber = generateAdmissionNumber(priorAdmissionNumbers);
+  const [first, ...rest] = name.trim().split(/\s+/);
+  const last = rest.at(-1) || first;
+  const email = `${first.toLowerCase()}.${last.toLowerCase().replace(/\./g, '')}@institution.edu`;
+  const gender = sequence % 2 === 0 ? 'Male' : 'Female';
+  const dateOfBirth = `200${String((sequence % 3) + 1)}-${String((sequence % 12) + 1).padStart(2, '0')}-${String((sequence % 27) + 2).padStart(2, '0')}`;
+  const guardianName = `Mr. ${last} ${first}`;
+  const guardianContact = `9${String(800000000 + sequence * 137).slice(0, 9)}`;
+
+  return {
+    id,
+    name,
+    rollNumber: id,
+    attendancePercent,
+    email,
+    photoUrl: studentPhotoPool[sequence % studentPhotoPool.length],
+    fullName: name,
+    admissionNumber,
+    dateOfBirth,
+    gender,
+    contactNumber: `+91 ${String(9000000000 + sequence * 1234).slice(0, 10)}`,
+    address: `${(sequence * 13) % 99 + 10}, ${['Anna Nagar', 'T Nagar', 'Velachery', 'Adyar', 'Mylapore'][sequence % 5]}, Chennai`,
+    guardianName,
+    guardianContactNumber: guardianContact,
+    qualification: sequence % 3 === 0 ? 'B.Tech' : sequence % 3 === 1 ? 'BBA' : 'MBA',
+    courseName,
+    batchName,
+    admissionDate: `2026-${String((sequence % 8) + 1).padStart(2, '0')}-${String((sequence % 25) + 1).padStart(2, '0')}`,
+    studentStatus: 'Active'
+  };
+};
+
 export const mockStudentsMWF: Student[] = [
-  { id: 'st-01', name: 'Aarav Sharma', rollNumber: 'PY24-M01', attendancePercent: 92, email: 'aarav.sharma@institution.edu' },
-  { id: 'st-02', name: 'Ananya Iyer', rollNumber: 'PY24-M02', attendancePercent: 96, email: 'ananya.iyer@institution.edu' },
-  { id: 'st-03', name: 'Devansh Kulkarni', rollNumber: 'PY24-M03', attendancePercent: 88, email: 'devansh.k@institution.edu' },
-  { id: 'st-04', name: 'Ishita Patel', rollNumber: 'PY24-M04', attendancePercent: 94, email: 'ishita.patel@institution.edu' },
-  { id: 'st-05', name: 'Kabir Malhotra', rollNumber: 'PY24-M05', attendancePercent: 84, email: 'kabir.m@institution.edu' },
-  { id: 'st-06', name: 'Meera Nambiar', rollNumber: 'PY24-M06', attendancePercent: 100, email: 'meera.nambiar@institution.edu' },
-  { id: 'st-07', name: 'Rohan Deshmukh', rollNumber: 'PY24-M07', attendancePercent: 90, email: 'rohan.d@institution.edu' },
-  { id: 'st-08', name: 'Sanya Sen', rollNumber: 'PY24-M08', attendancePercent: 91, email: 'sanya.sen@institution.edu' },
-  { id: 'st-09', name: 'Tanmay Joshi', rollNumber: 'PY24-M09', attendancePercent: 85, email: 'tanmay.j@institution.edu' },
-  { id: 'st-10', name: 'Zoya Qureshi', rollNumber: 'PY24-M10', attendancePercent: 95, email: 'zoya.q@institution.edu' },
+  buildStudent('Aarav Sharma', 92, 0, 'MWF'),
+  buildStudent('Ananya Iyer', 96, 1, 'MWF'),
+  buildStudent('Devansh Kulkarni', 88, 2, 'MWF'),
+  buildStudent('Ishita Patel', 94, 3, 'MWF'),
+  buildStudent('Kabir Malhotra', 84, 4, 'MWF'),
+  buildStudent('Meera Nambiar', 100, 5, 'MWF'),
+  buildStudent('Rohan Deshmukh', 90, 6, 'MWF'),
+  buildStudent('Sanya Sen', 91, 7, 'MWF'),
+  buildStudent('Tanmay Joshi', 85, 8, 'MWF'),
+  buildStudent('Zoya Qureshi', 95, 9, 'MWF')
 ];
 
 export const mockStudentsTTS: Student[] = [
-  { id: 'st-11', name: 'Aditya Verma', rollNumber: 'PY24-T11', attendancePercent: 89, email: 'aditya.v@institution.edu' },
-  { id: 'st-12', name: 'Bhavna Rao', rollNumber: 'PY24-T12', attendancePercent: 93, email: 'bhavna.r@institution.edu' },
-  { id: 'st-13', name: 'Chetan Mehta', rollNumber: 'PY24-T13', attendancePercent: 86, email: 'chetan.m@institution.edu' },
-  { id: 'st-14', name: 'Divya Nair', rollNumber: 'PY24-T14', attendancePercent: 97, email: 'divya.nair@institution.edu' },
-  { id: 'st-15', name: 'Gautam Singhania', rollNumber: 'PY24-T15', attendancePercent: 78, email: 'gautam.s@institution.edu' },
-  { id: 'st-16', name: 'Kavya Pillai', rollNumber: 'PY24-T16', attendancePercent: 92, email: 'kavya.p@institution.edu' },
-  { id: 'st-17', name: 'Manish Pandey', rollNumber: 'PY24-T17', attendancePercent: 88, email: 'manish.p@institution.edu' },
-  { id: 'st-18', name: 'Pooja Hegde', rollNumber: 'PY24-T18', attendancePercent: 94, email: 'pooja.h@institution.edu' },
-  { id: 'st-19', name: 'Rahul Chhabra', rollNumber: 'PY24-T19', attendancePercent: 91, email: 'rahul.c@institution.edu' },
-  { id: 'st-20', name: 'Shruti Varma', rollNumber: 'PY24-T20', attendancePercent: 89, email: 'shruti.v@institution.edu' }
+  buildStudent('Aditya Verma', 89, 10, 'TTS'),
+  buildStudent('Bhavna Rao', 93, 11, 'TTS'),
+  buildStudent('Chetan Mehta', 86, 12, 'TTS'),
+  buildStudent('Divya Nair', 97, 13, 'TTS'),
+  buildStudent('Gautam Singhania', 78, 14, 'TTS'),
+  buildStudent('Kavya Pillai', 92, 15, 'TTS'),
+  buildStudent('Manish Pandey', 88, 16, 'TTS'),
+  buildStudent('Pooja Hegde', 94, 17, 'TTS'),
+  buildStudent('Rahul Chhabra', 91, 18, 'TTS'),
+  buildStudent('Shruti Varma', 89, 19, 'TTS')
 ];
 
 export const mockStudentsAllDays: Student[] = [
-  { id: 'st-21', name: 'Arjun Das', rollNumber: 'PY24-D21', attendancePercent: 95, email: 'arjun.das@institution.edu' },
-  { id: 'st-22', name: 'Diya Mukherjee', rollNumber: 'PY24-D22', attendancePercent: 90, email: 'diya.m@institution.edu' },
-  { id: 'st-23', name: 'Farhan Akhtar', rollNumber: 'PY24-D23', attendancePercent: 85, email: 'farhan.a@institution.edu' },
-  { id: 'st-24', name: 'Lavanya S.', rollNumber: 'PY24-D24', attendancePercent: 98, email: 'lavanya.s@institution.edu' },
-  { id: 'st-25', name: 'Nikhil Rathi', rollNumber: 'PY24-D25', attendancePercent: 82, email: 'nikhil.r@institution.edu' },
-  { id: 'st-26', name: 'Prerna Chadha', rollNumber: 'PY24-D26', attendancePercent: 91, email: 'prerna.c@institution.edu' },
-  { id: 'st-27', name: 'Siddharth Roy', rollNumber: 'PY24-D27', attendancePercent: 93, email: 'siddharth.r@institution.edu' },
-  { id: 'st-28', name: 'Tejaswini M.', rollNumber: 'PY24-D28', attendancePercent: 87, email: 'tejaswini.m@institution.edu' }
+  buildStudent('Arjun Das', 95, 20, 'Daily'),
+  buildStudent('Diya Mukherjee', 90, 21, 'Daily'),
+  buildStudent('Farhan Akhtar', 85, 22, 'Daily'),
+  buildStudent('Lavanya S.', 98, 23, 'Daily'),
+  buildStudent('Nikhil Rathi', 82, 24, 'Daily'),
+  buildStudent('Prerna Chadha', 91, 25, 'Daily'),
+  buildStudent('Siddharth Roy', 93, 26, 'Daily'),
+  buildStudent('Tejaswini M.', 87, 27, 'Daily')
 ];
 
 function getRelativeDate(offsetDays: number): string {
@@ -58,16 +111,16 @@ function getRelativeDate(offsetDays: number): string {
 
 export const additionalStudentGroups: Student[][] = [
   [
-    { id: 'st-29', name: 'Aditi Menon', rollNumber: 'PY24-M29', attendancePercent: 94, email: 'aditi.menon@institution.edu' },
-    { id: 'st-30', name: 'Karan Bhat', rollNumber: 'PY24-M30', attendancePercent: 88, email: 'karan.bhat@institution.edu' },
-    { id: 'st-31', name: 'Nisha Kapoor', rollNumber: 'PY24-M31', attendancePercent: 91, email: 'nisha.kapoor@institution.edu' },
-    { id: 'st-32', name: 'Rahul Menon', rollNumber: 'PY24-M32', attendancePercent: 86, email: 'rahul.menon@institution.edu' }
+    buildStudent('Aditi Menon', 94, 28, 'MWF'),
+    buildStudent('Karan Bhat', 88, 29, 'MWF'),
+    buildStudent('Nisha Kapoor', 91, 30, 'MWF'),
+    buildStudent('Rahul Menon', 86, 31, 'MWF')
   ],
   [
-    { id: 'st-33', name: 'Sana Sheikh', rollNumber: 'PY24-T33', attendancePercent: 96, email: 'sana.sheikh@institution.edu' },
-    { id: 'st-34', name: 'Vivek Nair', rollNumber: 'PY24-T34', attendancePercent: 89, email: 'vivek.nair@institution.edu' },
-    { id: 'st-35', name: 'Mira Shah', rollNumber: 'PY24-T35', attendancePercent: 93, email: 'mira.shah@institution.edu' },
-    { id: 'st-36', name: 'Harish Reddy', rollNumber: 'PY24-T36', attendancePercent: 87, email: 'harish.reddy@institution.edu' }
+    buildStudent('Sana Sheikh', 96, 32, 'TTS'),
+    buildStudent('Vivek Nair', 89, 33, 'TTS'),
+    buildStudent('Mira Shah', 93, 34, 'TTS'),
+    buildStudent('Harish Reddy', 87, 35, 'TTS')
   ]
 ];
 

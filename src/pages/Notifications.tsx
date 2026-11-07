@@ -39,7 +39,7 @@ export const Notifications: React.FC = () => {
   return (
     <div className="space-y-2">
       {/* Tabs & Filter Bar */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 rounded-xl max-w-[180px] bg-white border border-slate-200 shadow-2xs">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 rounded-xl max-w-[255px] bg-white border border-slate-200 shadow-2xs">
         {/* Category selector */}
         <div className="flex items-center gap-2">
           <Filter className="w-3.5 h-3.5 text-slate-400" />

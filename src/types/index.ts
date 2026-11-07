@@ -8,6 +8,20 @@ export interface Student {
   rollNumber: string;
   attendancePercent: number;
   email: string;
+  photoUrl?: string;
+  fullName?: string;
+  admissionNumber?: string;
+  dateOfBirth?: string;
+  gender?: string;
+  contactNumber?: string;
+  address?: string;
+  guardianName?: string;
+  guardianContactNumber?: string;
+  qualification?: string;
+  courseName?: string;
+  batchName?: string;
+  admissionDate?: string;
+  studentStatus?: string;
 }
 
 export type AttendanceStatus = 'Present' | 'Absent' | 'Late' | 'Holiday';

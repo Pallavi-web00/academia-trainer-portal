@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { AdminExamination, ExaminationStudentMarks } from '../types';
+import { AdminExamination, ExaminationMarksRecord, ExaminationStudentMarks } from '../types';
 import {
   getAdminExaminationNotifications,
   getInitialAdminExaminations,
@@ -17,6 +17,7 @@ import {
 } from '../data/syllabusAssessmentData';
 import {
   getEarliestExaminationDate,
+  isExaminationCompleted,
   getMarksValidationError,
   isExaminationMarksEntryOpen,
   sanitizePersistedExaminationMarks
@@ -85,6 +86,44 @@ describe('Examination marks workflow', () => {
     assert.equal(getMarksValidationError(examination, completeMarks(), true), undefined);
   });
 
+  it('marks an exam completed only after submission for its exact batch and module', () => {
+    const examination = makeExamination();
+    const record: ExaminationMarksRecord = {
+      id: 'marks-exam-one',
+      examinationId: examination.id,
+      batchId: examination.batchId,
+      moduleId: examination.moduleId,
+      trainerId: 'trainer-1',
+      studentMarks: completeMarks(),
+      status: 'Draft',
+      savedAt: '2026-11-05T10:00:00.000Z'
+    };
+
+    assert.equal(isExaminationCompleted(examination, [record]), false);
+    assert.equal(
+      isExaminationCompleted(examination, [{ ...record, status: 'Submitted', submittedAt: record.savedAt }]),
+      true
+    );
+    assert.equal(
+      isExaminationCompleted(examination, [{
+        ...record,
+        batchId: 'another-batch',
+        status: 'Submitted',
+        submittedAt: record.savedAt
+      }]),
+      false
+    );
+    assert.equal(
+      isExaminationCompleted(examination, [{
+        ...record,
+        moduleId: 'another-module',
+        status: 'Submitted',
+        submittedAt: record.savedAt
+      }]),
+      false
+    );
+  });
+
   it('rejects negative values and marks above the supplied maximum', () => {
     const examination = makeExamination();
     const negative = completeMarks();
@@ -149,7 +188,14 @@ describe('Examination marks workflow', () => {
     assert.equal(dailyExam.eligibleStudents.length, 6);
     assert.deepEqual(
       dailyExam.eligibleStudents.map((student) => student.studentId),
-      ['st-21', 'st-22', 'st-24', 'st-26', 'st-27', 'st-28']
+      [
+        'STU-2026-1021',
+        'STU-2026-1022',
+        'STU-2026-1024',
+        'STU-2026-1026',
+        'STU-2026-1027',
+        'STU-2026-1028'
+      ]
     );
     assert.equal(new Set(dailyExam.eligibleStudents.map((student) => student.studentId)).size, 6);
     assert.ok(dailyExam.eligibleStudents.every((eligible) =>
@@ -325,7 +371,14 @@ describe('Examination marks workflow', () => {
     assert.equal(dailyExam.eligibleStudents.length, 6);
     assert.deepEqual(
       dailyExam.eligibleStudents.map((student) => student.studentId),
-      ['st-21', 'st-22', 'st-24', 'st-26', 'st-27', 'st-28']
+      [
+        'STU-2026-1021',
+        'STU-2026-1022',
+        'STU-2026-1024',
+        'STU-2026-1026',
+        'STU-2026-1027',
+        'STU-2026-1028'
+      ]
     );
     assert.equal(
       published.some((exam) => exam.batchId === 'batch-mwf'),

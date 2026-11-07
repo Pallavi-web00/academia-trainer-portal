@@ -137,19 +137,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             </div>
           </div>
 
-          {/* Drawer close button */}
-          <button
-            onClick={() => closeAfterRoll()}
-            className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition-colors"
-            aria-label="Close navigation drawer"
-            title="Close navigation drawer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          
         </div>
 
         {/* Navigation Items (auto-close on click) */}
-        <nav className="portal-sidebar-nav flex-1 px-3 py-4 space-y-1.5">
+        <nav className="portal-sidebar-nav flex-1 px-3 py-4 space-y-1">
           <div className="px-3 pb-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400">
             Navigation Menu
           </div>
@@ -187,11 +179,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         {pendingAdminTasksCount > 0 && (
           <div className="mx-3 mb-3 p-3 rounded-xl bg-slate-800/80 border border-slate-700/60 text-xs">
             <div className="flex items-center justify-between text-indigo-400 font-semibold mb-1">
-              <span className="flex items-center gap-1.5">
+              <span className="flex items-center gap-1">
                 <ClipboardList className="w-3.5 h-3.5" />
                 <span>Admin Tasks</span>
               </span>
-              <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono-numbers text-[10px]">
+              <span className="px-1 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono-numbers text-[10px]">
                 {pendingAdminTasksCount} Active
               </span>
             </div>
@@ -208,7 +200,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             onClick={(event) => handleNavigation(event, '/profile')}
             title={trainer.name}
             className={({ isActive }) =>
-              `portal-nav-link flex items-center gap-3 p-2.5 rounded-xl transition-colors ${
+              `portal-nav-link flex items-center gap-1 p-2.5 rounded-xl transition-colors ${
                 isActive
                   ? 'bg-indigo-600/30 border border-indigo-500/40'
                   : 'bg-slate-800/60 hover:bg-slate-800'

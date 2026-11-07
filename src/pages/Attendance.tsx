@@ -17,6 +17,7 @@ import { ScheduleItem, Student, AttendanceRecord, AttendanceStatus } from '../ty
 import { createMockAttendanceRecords, attendancePolicyDescription, getAttendancePercentage } from '../data/attendanceData';
 import { getBatchDaysDescription, getScheduleBatchId } from '../utils/dateTimeUtils';
 import { useTrainer } from '../context/TrainerContext';
+import { StudentProfileModal } from '../components/modals/StudentProfileModal';
 
 type AttendanceView = 'monthly' | 'today' | 'overall' | 'student';
 type StatusFilter = 'All' | AttendanceStatus;
@@ -130,6 +131,7 @@ export const Attendance: React.FC = () => {
   const { schedules } = useTrainer();
   const [selectedBatch, setSelectedBatch] = useState<ScheduleItem | null>(null);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
+  const [profileStudent, setProfileStudent] = useState<Student | null>(null);
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -329,7 +331,7 @@ export const Attendance: React.FC = () => {
   );
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-2">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="flex items-start gap-3">
           <button
@@ -347,16 +349,7 @@ export const Attendance: React.FC = () => {
             <ArrowLeft className="h-3.5 w-3.5" />
             {view === 'monthly' ? 'All Batches' : 'Back to Monthly Attendance'}
           </button>
-          <div className="min-w-0">
-            <h2 className="text-lg font-bold text-slate-900">
-              {view === 'student' && selectedStudent ? selectedStudent.name : `${selectedBatch.batch} Attendance`}
-            </h2>
-            <p className="mt-0.5 text-xs text-slate-500">
-              {view === 'student' && selectedStudent
-                ? `${selectedStudent.rollNumber} · ${selectedBatch.batch}`
-                : `${selectedBatch.students.length} students · ${getBatchDaysDescription(selectedBatch.batch, selectedBatch.scheduledDays)}`}
-            </p>
-          </div>
+          
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {view === 'monthly' && (
@@ -384,7 +377,7 @@ export const Attendance: React.FC = () => {
 
       {view === 'monthly' && (
         <>
-          <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-1 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-2">
               <button type="button" onClick={() => goToMonth(-1)} aria-label="Previous month" className="rounded-lg border border-slate-200 p-2 text-slate-600 hover:bg-rose-50 hover:text-rose-800">
                 <ChevronLeft className="h-4 w-4" />
@@ -623,9 +616,18 @@ export const Attendance: React.FC = () => {
       {view === 'student' && selectedStudent && (
         <>
           <div className="grid grid-cols-1 gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xs sm:grid-cols-4">
-            <div className="flex items-center gap-3 sm:col-span-2">
-              <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50 text-rose-800"><UserRound className="h-5 w-5" /></span>
-              <div><p className="text-sm font-bold text-slate-900">{selectedStudent.name}</p><p className="mt-0.5 text-xs text-slate-500">{selectedStudent.rollNumber} · {selectedBatch.batch}</p></div>
+            <div className="flex items-center justify-between gap-3 sm:col-span-2">
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-rose-50 text-rose-800"><UserRound className="h-5 w-5" /></span>
+                <div><p className="text-sm font-bold text-slate-900">{selectedStudent.name}</p><p className="mt-0.5 text-xs text-slate-500">{selectedStudent.rollNumber} · {selectedBatch.batch}</p></div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setProfileStudent(selectedStudent)}
+                className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-semibold text-rose-800 hover:bg-rose-100"
+              >
+                View Profile
+              </button>
             </div>
             <div className="rounded-xl bg-slate-50 p-3 sm:col-span-2">
               <p className="text-[11px] text-slate-500">Overall Attendance</p>
@@ -728,6 +730,12 @@ export const Attendance: React.FC = () => {
           </div>
         </>
       )}
+
+      <StudentProfileModal
+        isOpen={Boolean(profileStudent)}
+        onClose={() => setProfileStudent(null)}
+        student={profileStudent}
+      />
     </div>
   );
 };

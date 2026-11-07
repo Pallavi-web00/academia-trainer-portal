@@ -42,6 +42,7 @@ import { generateReminders } from '../utils/reminderLogic';
 import {
   areAllStudentsAssessmentQualified,
   getQualifyingAssessmentResults,
+  getStudentsRequiringNextAssessment,
   hasModuleFinanceSubmission,
   hasSavedTopicCompletion,
   isModuleReadyForFinanceVerification
@@ -75,6 +76,10 @@ import {
   sanitizePersistedExaminationMarks
 } from '../utils/examinationMarks';
 import { getTopicNotesAvailabilityStatus } from '../utils/topicNotesAvailability';
+import {
+  migrateStudentIdReferences,
+  normalizeScheduleStudentIds
+} from '../utils/studentId';
 
 interface TrainerContextType {
   trainer: TrainerProfile;
@@ -153,6 +158,7 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const moduleFinanceSubmissionLocks = useRef(new Set<string>());
   const examinationMarksLocks = useRef(new Set<string>());
+  const syllabusAssessmentSendAttempts = useRef(new Map<string, number>());
 
   useEffect(() => {
     const timerId = window.setInterval(() => setCurrentTime(new Date()), 30_000);
@@ -186,7 +192,7 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
       const initialById = new Map(
         initialSchedules.map((schedule) => [schedule.id, schedule])
       );
-      return parsed.map((schedule) => {
+      const normalized = normalizeScheduleStudentIds(parsed).schedules.map((schedule) => {
         const initial = initialById.get(schedule.id);
         const seedCompletedTopics = schedule.id === 'batch-daily' &&
           schedule.moduleId === initial?.moduleId
@@ -198,21 +204,33 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
           completedTopicIds: [...new Set([...(schedule.completedTopicIds || []), ...seedCompletedTopics])]
         };
       });
+      return normalized;
     } catch {
-      return getInitialSchedules();
+      return normalizeScheduleStudentIds(getInitialSchedules()).schedules;
     }
   });
+
+  const studentIdMap = useMemo(() => {
+    const mapped = normalizeScheduleStudentIds(schedules);
+    return mapped.idMap;
+  }, [schedules]);
 
   const [syllabusAssessments, setSyllabusAssessments] = useState<SyllabusAssessment[]>(() => {
     const initialAssessments = getInitialSyllabusAssessments(schedules, initialModulesData[0]);
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.ASSESSMENTS);
-      return saved
-        ? mergeInitialSyllabusAssessments(
-            JSON.parse(saved) as SyllabusAssessment[],
-            initialAssessments
-          )
-        : initialAssessments;
+      if (!saved) return initialAssessments;
+
+      const savedAssessments = JSON.parse(saved) as SyllabusAssessment[];
+      const migratedAssessments = savedAssessments.map((assessment) => ({
+        ...assessment,
+        students: assessment.students.map((student) => ({
+          ...student,
+          studentId: studentIdMap.get(student.studentId) ?? student.studentId
+        }))
+      }));
+
+      return mergeInitialSyllabusAssessments(migratedAssessments, initialAssessments);
     } catch {
       return initialAssessments;
     }
@@ -224,7 +242,23 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
       const saved = localStorage.getItem(STORAGE_KEYS.EXAMINATIONS);
       if (!saved) return initialExaminations;
       const savedExaminations = JSON.parse(saved) as AdminExamination[];
-      const savedById = new Map(savedExaminations.map((examination) => [examination.id, examination]));
+      const migratedExaminations = savedExaminations.map((examination) => {
+        const matchingSchedule = schedules.find((schedule) =>
+          getScheduleBatchId(schedule) === examination.batchId &&
+          schedule.moduleId === examination.moduleId
+        );
+        return {
+          ...examination,
+          eligibleStudents: examination.eligibleStudents.map((student) => ({
+            ...student,
+            studentId: studentIdMap.get(student.studentId) ??
+              matchingSchedule?.students.find((item) => item.id === student.studentId)?.id ??
+              matchingSchedule?.students.find((item) => item.name === student.studentName)?.id ??
+              student.studentId
+          }))
+        };
+      });
+      const savedById = new Map(migratedExaminations.map((examination) => [examination.id, examination]));
       const initialIds = new Set(initialExaminations.map((examination) => examination.id));
       return [
         ...initialExaminations.map((examination) => {
@@ -235,7 +269,7 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
           }
           return savedExamination;
         }),
-        ...savedExaminations.filter((examination) => !initialIds.has(examination.id))
+        ...migratedExaminations.filter((examination) => !initialIds.has(examination.id))
       ];
     } catch {
       return initialExaminations;
@@ -244,13 +278,20 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [examinationMarks, setExaminationMarks] = useState<ExaminationMarksRecord[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.EXAMINATION_MARKS);
-      return saved
-        ? sanitizePersistedExaminationMarks(
-            examinations,
-            JSON.parse(saved) as ExaminationMarksRecord[],
-            currentTime
-          )
-        : [];
+      if (!saved) return [];
+      const persistedMarks = JSON.parse(saved) as ExaminationMarksRecord[];
+      const migratedMarks = persistedMarks.map((record) => ({
+        ...record,
+        studentMarks: record.studentMarks.map((studentMark) => ({
+          ...studentMark,
+          studentId: studentIdMap.get(studentMark.studentId) ?? studentMark.studentId
+        }))
+      }));
+      return sanitizePersistedExaminationMarks(
+        examinations,
+        migratedMarks,
+        currentTime
+      );
     } catch {
       return [];
     }
@@ -1207,23 +1248,42 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
       return undefined;
     }
 
-    const sentAt = new Date().toISOString();
     const previousAttempts = syllabusAssessments.filter((item) =>
       item.batchId === batchId &&
       item.moduleId === moduleId &&
       item.topicId === topicId
     );
-    const previouslyPassed = getQualifyingAssessmentResults(previousAttempts);
-    const studentsNeedingAssessment = schedule.students.filter(
-      (student) => !previouslyPassed.has(student.id)
+    const attempt = (latest?.attempt || 0) + 1;
+    const assessmentKey = `${batchId}:${moduleId}:${topicId}`;
+    if ((syllabusAssessmentSendAttempts.current.get(assessmentKey) || 0) >= attempt) {
+      addToast({
+        type: 'info',
+        title: 'Assessment Already Sent',
+        message: 'This attempt has already been created. Refresh the tracker to view it.'
+      });
+      return undefined;
+    }
+
+    const sentAt = new Date().toISOString();
+    const studentsNeedingAssessment = getStudentsRequiringNextAssessment(
+      schedule.students,
+      previousAttempts
     );
+    if (studentsNeedingAssessment.length === 0) {
+      addToast({
+        type: 'warning',
+        title: 'No Students Require a Retake',
+        message: 'No students remain below the passing threshold for this batch and topic.'
+      });
+      return undefined;
+    }
     const assessment: SyllabusAssessment = {
       id: `mcq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       batchId,
       moduleId,
       topicId,
       topicName: topic.title,
-      attempt: (latest?.attempt || 0) + 1,
+      attempt,
       questions: createSyllabusAssessmentQuestions(topicId, topic.title, targetModule.topics),
       students: studentsNeedingAssessment.map((student) => ({
         studentId: student.id,
@@ -1233,6 +1293,7 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
       status: 'Sent',
       sentAt
     };
+    syllabusAssessmentSendAttempts.current.set(assessmentKey, attempt);
     setSyllabusAssessments((previous) => [assessment, ...previous]);
     recordAssessmentActivity(
       assessment,
@@ -1768,6 +1829,7 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
   // Reset function to clear mock modifications
   const resetAllMockData = () => {
     moduleFinanceSubmissionLocks.current.clear();
+    syllabusAssessmentSendAttempts.current.clear();
     const initialModule = initialModulesData[0];
     const initialSchedules = getInitialSchedules();
     const initialNotes = getInitialTopicNotes(initialModule, trainer.trainerId);

@@ -77,12 +77,19 @@ export const Examinations: React.FC = () => {
 
   useEffect(() => {
     const examinationId = searchParams.get('exam');
-    if (examinationId && assignedExaminations.some((exam) => exam.id === examinationId)) {
-      setActiveExamId(null);
-      setExpandedEligibleExamId(examinationId);
-      const record = examinationMarks.find((item) => item.examinationId === examinationId);
-      setShowingMarksExamId(record?.status === 'Submitted' ? examinationId : null);
-    }
+    if (!examinationId || !assignedExaminations.some((exam) => exam.id === examinationId)) return;
+
+    setActiveExamId(null);
+    setExpandedEligibleExamId(examinationId);
+    const record = examinationMarks.find((item) => item.examinationId === examinationId);
+    setShowingMarksExamId(record?.status === 'Submitted' ? examinationId : null);
+    const scrollFrameId = window.requestAnimationFrame(() => {
+      document.getElementById(`examination-${examinationId}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center'
+      });
+    });
+    return () => window.cancelAnimationFrame(scrollFrameId);
   }, [assignedExaminations, examinationMarks, searchParams]);
 
   const setMark = (
@@ -189,8 +196,11 @@ export const Examinations: React.FC = () => {
             return (
               <article
                 key={exam.id}
+                id={`examination-${exam.id}`}
                 className={`rounded-xl border bg-white p-4 shadow-2xs sm:p-5 ${
-                  activeExamId === exam.id ? 'border-rose-300 ring-1 ring-rose-100' : 'border-slate-200'
+                  activeExamId === exam.id || searchParams.get('exam') === exam.id
+                    ? 'border-rose-300 ring-1 ring-rose-100'
+                    : 'border-slate-200'
                 }`}
               >
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -201,7 +211,7 @@ export const Examinations: React.FC = () => {
                       <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-700">{exam.status}</span>
                       {submitted ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
-                          <CheckCircle2 className="h-3.5 w-3.5" /> Marks Submitted
+                          <CheckCircle2 className="h-3.5 w-3.5" /> Exam Completed · Marks Submitted
                         </span>
                       ) : record?.status === 'Draft' ? (
                         <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800">Draft Saved</span>
