@@ -22,6 +22,11 @@ import {
   getExaminationComponents,
   isExaminationMarksEntryOpen
 } from '../utils/examinationMarks';
+import {
+  downloadExaminationResults,
+  ExaminationExportFormat,
+  getStudentTotalMarks
+} from '../utils/examinationResults';
 
 const formatDate = (value: string) => {
   const date = new Date(`${value}T00:00:00`);
@@ -63,6 +68,7 @@ export const Examinations: React.FC = () => {
   const [draft, setDraft] = useState<ExaminationStudentMarks[]>([]);
   const [confirmingExamId, setConfirmingExamId] = useState<string | null>(null);
   const [showingMarksExamId, setShowingMarksExamId] = useState<string | null>(null);
+  const [exportFormatByExam, setExportFormatByExam] = useState<Record<string, ExaminationExportFormat>>({});
 
   const assignedExaminations = useMemo(
     () => examinations.filter((exam) =>
@@ -97,11 +103,15 @@ export const Examinations: React.FC = () => {
     component: ExaminationComponentType,
     rawValue: string
   ) => {
+    if (rawValue !== '' && !/^\d*\.?\d*$/.test(rawValue)) return;
+
     const key = component.toLowerCase() as 'theory' | 'practical' | 'project';
     const value = rawValue === '' ? null : Number(rawValue);
+    if (value !== null && (!Number.isFinite(value) || value < 0 || value > 100)) return;
+
     setDraft((current) => current.map((student) =>
       student.studentId === studentId
-        ? { ...student, [key]: value !== null && Number.isFinite(value) ? value : null }
+        ? { ...student, [key]: value }
         : student
     ));
   };
@@ -119,6 +129,12 @@ export const Examinations: React.FC = () => {
       setActiveExamId(null);
       setShowingMarksExamId(null);
     }
+  };
+
+  const getTotalDisplay = (studentMarks?: ExaminationStudentMarks | null) => {
+    if (!studentMarks) return '—';
+    const total = getStudentTotalMarks(studentMarks);
+    return total === null ? '—' : total;
   };
 
   const summary = [
@@ -232,17 +248,42 @@ export const Examinations: React.FC = () => {
                       <Users className="h-4 w-4" />
                       {exam.eligibleStudents.length} Eligible Students
                     </button>
-                    {submitted ? (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setActiveExamId(null);
-                          setShowingMarksExamId(exam.id);
-                        }}
-                        className="inline-flex items-center gap-1.5 rounded-lg bg-rose-900 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-800"
-                      >
-                        <FileText className="h-4 w-4" /> View Marks
-                      </button>
+                    {submitted && record ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveExamId(null);
+                            setShowingMarksExamId(exam.id);
+                          }}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-rose-900 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-800"
+                        >
+                          <FileText className="h-4 w-4" /> View Marks
+                        </button>
+                        <div className="inline-flex items-center gap-2 rounded-lg border border-rose-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-700">
+                          <span>Export</span>
+                          <select
+                            value={exportFormatByExam[exam.id] ?? 'pdf'}
+                            onChange={(event) => setExportFormatByExam((current) => ({
+                              ...current,
+                              [exam.id]: event.target.value as ExaminationExportFormat
+                            }))}
+                            className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[10px] text-slate-700 outline-none focus:border-rose-400"
+                            aria-label={`Export format for ${exam.moduleName}`}
+                          >
+                            <option value="pdf">PDF</option>
+                            <option value="xlsx">Excel</option>
+                            <option value="csv">CSV</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => downloadExaminationResults(exam, record, exportFormatByExam[exam.id] ?? 'pdf')}
+                            className="rounded-md bg-rose-900 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-rose-800"
+                          >
+                            Download
+                          </button>
+                        </div>
+                      </>
                     ) : entryOpen && !editing ? (
                       <button
                         type="button"
@@ -318,7 +359,7 @@ export const Examinations: React.FC = () => {
                     <h3 className="text-sm font-bold text-slate-900">Enter examination marks</h3>
                     <p className="mt-1 text-xs text-slate-500">Enter values for the scheduled components. Partial drafts can be saved; final submission requires every value.</p>
                     <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
-                      <table className="w-full min-w-[640px] text-left text-xs">
+                      <table className="w-full min-w-[760px] text-left text-xs">
                         <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
                           <tr>
                             <th className="px-3 py-2">Student</th>
@@ -327,34 +368,42 @@ export const Examinations: React.FC = () => {
                                 {component.type}{component.maxMarks !== undefined ? ` (/${component.maxMarks})` : ''}
                               </th>
                             ))}
+                            <th className="px-3 py-2">Total (/300)</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {exam.eligibleStudents.map((student) => (
-                            <tr key={student.studentId}>
-                              <td className="px-3 py-2 font-medium text-slate-800">
-                                {student.studentName}<span className="ml-1 font-mono text-[10px] text-slate-400">{student.studentId}</span>
-                              </td>
-                              {components.map((component) => {
-                                const key = component.type.toLowerCase() as 'theory' | 'practical' | 'project';
-                                const value = draft.find((item) => item.studentId === student.studentId)?.[key];
-                                return (
-                                  <td key={component.type} className="px-3 py-2">
-                                    <input
-                                      type="number"
-                                      min="0"
-                                      max={component.maxMarks}
-                                      step="any"
-                                      value={value ?? ''}
-                                      onChange={(event) => setMark(student.studentId, component.type, event.target.value)}
-                                      aria-label={`${component.type} marks for ${student.studentName}`}
-                                      className="w-24 rounded-md border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100"
-                                    />
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
+                          {exam.eligibleStudents.map((student) => {
+                            const marks = draft.find((item) => item.studentId === student.studentId);
+                            const total = getStudentTotalMarks(marks ?? { theory: null, practical: null, project: null });
+                            return (
+                              <tr key={student.studentId}>
+                                <td className="px-3 py-2 font-medium text-slate-800">
+                                  {student.studentName}<span className="ml-1 font-mono text-[10px] text-slate-400">{student.studentId}</span>
+                                </td>
+                                {components.map((component) => {
+                                  const key = component.type.toLowerCase() as 'theory' | 'practical' | 'project';
+                                  const value = marks?.[key];
+                                  return (
+                                    <td key={component.type} className="px-3 py-2">
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        max={component.maxMarks}
+                                        step="any"
+                                        value={value ?? ''}
+                                        onChange={(event) => setMark(student.studentId, component.type, event.target.value)}
+                                        aria-label={`${component.type} marks for ${student.studentName}`}
+                                        className="w-24 rounded-md border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100"
+                                      />
+                                    </td>
+                                  );
+                                })}
+                                <td className="px-3 py-2 text-center font-semibold text-slate-700">
+                                  {total === null ? '—' : total}
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
@@ -391,16 +440,18 @@ export const Examinations: React.FC = () => {
 
                 {submitted && viewing && record && (
                   <div className="mt-4 overflow-x-auto rounded-lg border border-emerald-200">
-                    <table className="w-full min-w-[640px] text-left text-xs">
+                    <table className="w-full min-w-[760px] text-left text-xs">
                       <thead className="bg-emerald-50 text-[10px] uppercase tracking-wide text-emerald-800">
                         <tr>
                           <th className="px-3 py-2">Student</th>
                           {components.map((component) => <th key={component.type} className="px-3 py-2">{component.type}</th>)}
+                          <th className="px-3 py-2">Total</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
                         {record.studentMarks.map((marks) => {
                           const student = exam.eligibleStudents.find((item) => item.studentId === marks.studentId);
+                          const total = getStudentTotalMarks(marks);
                           return (
                             <tr key={marks.studentId}>
                               <td className="px-3 py-2 font-medium text-slate-800">{student?.studentName || marks.studentId}</td>
@@ -408,6 +459,7 @@ export const Examinations: React.FC = () => {
                                 const key = component.type.toLowerCase() as 'theory' | 'practical' | 'project';
                                 return <td key={component.type} className="px-3 py-2 text-slate-700">{marks[key]}</td>;
                               })}
+                              <td className="px-3 py-2 text-center font-semibold text-slate-700">{total === null ? '—' : total}</td>
                             </tr>
                           );
                         })}
