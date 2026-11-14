@@ -2,12 +2,14 @@ import React, { useState, useEffect } from 'react';
 import { X, AlertCircle, Send, Calendar, Clock } from 'lucide-react';
 import { ScheduleItem } from '../../types';
 import { formatReadableDate } from '../../utils/dateTimeUtils';
+import { getBatchEndDate } from '../../utils/batchEndDate';
 import { Modal } from '../common/Modal';
 
 interface ChangeRequestModalProps {
   isOpen: boolean;
   onClose: () => void;
   schedule: ScheduleItem | null;
+  topicCount: number;
   onSubmit: (scheduleId: string, reason: string) => boolean;
 }
 
@@ -15,6 +17,7 @@ export const ChangeRequestModal: React.FC<ChangeRequestModalProps> = ({
   isOpen,
   onClose,
   schedule,
+  topicCount,
   onSubmit
 }) => {
   const [reason, setReason] = useState('');
@@ -28,6 +31,7 @@ export const ChangeRequestModal: React.FC<ChangeRequestModalProps> = ({
   }, [schedule]);
 
   if (!isOpen || !schedule) return null;
+  const batchEndDate = getBatchEndDate(schedule, topicCount);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,6 +83,7 @@ export const ChangeRequestModal: React.FC<ChangeRequestModalProps> = ({
                   <Calendar className="w-3.5 h-3.5 text-slate-400" />
                   <span>Start: {formatReadableDate(schedule.startDate || schedule.scheduledDate)}</span>
                 </span>
+                <span>End: {batchEndDate ? formatReadableDate(batchEndDate) : '—'}</span>
                 <span className="flex items-center gap-1">
                   <Clock className="w-3.5 h-3.5 text-slate-400" />
                   {schedule.startTime} – {schedule.endTime}

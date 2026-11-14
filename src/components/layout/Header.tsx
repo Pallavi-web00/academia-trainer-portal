@@ -27,7 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
       case '/schedule':
         return { title: 'My Class Schedule', subtitle: 'Review assigned teaching schedules and request changes' };
       case '/syllabus':
-        return { title: 'Syllabus Tracker', subtitle: 'Record topic completions and session outcome logs' };
+        return { title: 'My Class Schedule', subtitle: 'Review batch schedules and track topic progress' };
       case '/notes':
         return { title: 'Notes Management', subtitle: 'Prepare and manage notes for assigned module topics' };
       case '/attendance':

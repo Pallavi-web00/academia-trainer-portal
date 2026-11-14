@@ -13,6 +13,10 @@ import {
   AdminExamination,
   ExaminationMarksRecord,
   ExaminationStudentMarks,
+  ExaminationCompletionComponent,
+  ExaminationCompletionEvent,
+  ExaminationCompletionState,
+  TopicScheduleChangeRequest,
   SyllabusAssessment,
   TopicNotesAvailabilityStatus,
   TopicNotesMetadata,
@@ -45,9 +49,12 @@ import {
   getStudentsRequiringNextAssessment,
   hasModuleFinanceSubmission,
   hasSavedTopicCompletion,
-  isModuleReadyForFinanceVerification
+  isModuleReadyForFinanceVerification,
+  isModuleSuccessfullyCompletedForBatch
 } from '../utils/syllabusAssessment';
+import { calculateBatchEndDate } from '../utils/batchEndDate';
 import { createFinanceModuleSubmissionNotification } from '../utils/financeNotifications';
+import { getNextClassDate, getRescheduledTopicDates, getTopicScheduledDates } from '../utils/topicScheduling';
 import {
   createAdminMarksSubmittedNotification,
   getAdminExaminationNotifications,
@@ -96,6 +103,9 @@ interface TrainerContextType {
   notifications: NotificationItem[];
   examinations: AdminExamination[];
   examinationMarks: ExaminationMarksRecord[];
+  examinationCompletionStatus: Record<string, ExaminationCompletionState>;
+  examinationCompletionEvents: ExaminationCompletionEvent[];
+  topicScheduleChangeRequests: TopicScheduleChangeRequest[];
   syllabusAssessments: SyllabusAssessment[];
   topicNotes: TopicNotesMetadata[];
   topicNotesReleases: TopicNotesRelease[];
@@ -135,6 +145,14 @@ interface TrainerContextType {
   resolveNotification: (notificationId: string) => void;
   saveExaminationMarks: (examinationId: string, studentMarks: ExaminationStudentMarks[]) => boolean;
   submitExaminationMarks: (examinationId: string, studentMarks: ExaminationStudentMarks[]) => boolean;
+  recordExaminationComponentCompletion: (exam: AdminExamination, component: ExaminationCompletionComponent) => boolean;
+  submitTopicScheduleChangeRequest: (input: {
+    scheduleId: string;
+    topicId: string;
+    postponeFrom: string;
+    postponeUntil: string;
+    reason: string;
+  }) => boolean;
   resetAllMockData: () => void;
 }
 
@@ -149,6 +167,9 @@ const STORAGE_KEYS = {
   RESOLVED_NOTIFS: 'academia_trainer_resolved_notifs_v10',
   EXAMINATIONS: 'academia_trainer_admin_examinations_v1',
   EXAMINATION_MARKS: 'academia_trainer_examination_marks_v1',
+  EXAMINATION_COMPLETION_STATUS: 'academia_trainer_examination_completion_status_v1',
+  EXAMINATION_COMPLETION_EVENTS: 'academia_trainer_examination_completion_events_v1',
+  TOPIC_SCHEDULE_CHANGE_REQUESTS: 'academia_trainer_topic_schedule_change_requests_v1',
   ASSESSMENTS: 'academia_trainer_syllabus_assessments_v1',
   NOTES_RELEASES: 'academia_trainer_topic_notes_releases_v1'
 };
@@ -158,6 +179,7 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [currentTime, setCurrentTime] = useState(() => new Date());
   const moduleFinanceSubmissionLocks = useRef(new Set<string>());
   const examinationMarksLocks = useRef(new Set<string>());
+  const topicScheduleChangeLocks = useRef(new Set<string>());
   const syllabusAssessmentSendAttempts = useRef(new Map<string, number>());
 
   useEffect(() => {
@@ -292,6 +314,30 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
         migratedMarks,
         currentTime
       );
+    } catch {
+      return [];
+    }
+  });
+  const [examinationCompletionStatus, setExaminationCompletionStatus] = useState<Record<string, ExaminationCompletionState>>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.EXAMINATION_COMPLETION_STATUS);
+      return saved ? (JSON.parse(saved) as Record<string, ExaminationCompletionState>) : {};
+    } catch {
+      return {};
+    }
+  });
+  const [examinationCompletionEvents, setExaminationCompletionEvents] = useState<ExaminationCompletionEvent[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.EXAMINATION_COMPLETION_EVENTS);
+      return saved ? (JSON.parse(saved) as ExaminationCompletionEvent[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [topicScheduleChangeRequests, setTopicScheduleChangeRequests] = useState<TopicScheduleChangeRequest[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.TOPIC_SCHEDULE_CHANGE_REQUESTS);
+      return saved ? (JSON.parse(saved) as TopicScheduleChangeRequest[]) : [];
     } catch {
       return [];
     }
@@ -600,6 +646,45 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
   }, [activityHistory]);
 
   useEffect(() => {
+    setSchedules((previous) => {
+      let changed = false;
+      const next = previous.map((schedule) => {
+        if (schedule.historicalEndDate) return schedule;
+        const targetModule = modules.find((item) => item.id === schedule.moduleId);
+        if (
+          !targetModule ||
+          !isModuleSuccessfullyCompletedForBatch({
+            topicIds: targetModule.topics.map((topic) => topic.id),
+            schedule,
+            activityHistory,
+            assessments: syllabusAssessments
+          })
+        ) return schedule;
+
+        const completedTopicIds = activityHistory
+          .filter((event) =>
+            event.batchId === getScheduleBatchId(schedule) &&
+            event.moduleId === schedule.moduleId &&
+            event.eventType === 'Topic Completed' &&
+            event.savedStatus === 'Saved' &&
+            event.topicId
+          )
+          .map((event) => event.topicId as string);
+        const historicalEndDate = calculateBatchEndDate(
+          schedule,
+          targetModule.topics.length,
+          targetModule.topics.map((topic) => topic.id),
+          completedTopicIds
+        );
+        if (!historicalEndDate) return schedule;
+        changed = true;
+        return { ...schedule, historicalEndDate };
+      });
+      return changed ? next : previous;
+    });
+  }, [schedules, modules, activityHistory, syllabusAssessments]);
+
+  useEffect(() => {
     const today = getCurrentDateISO();
     const generated = generateScheduledSessions(schedules, today);
     setSyllabusSessions((previous) => {
@@ -620,6 +705,18 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.EXAMINATION_MARKS, JSON.stringify(examinationMarks));
   }, [examinationMarks]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.EXAMINATION_COMPLETION_STATUS, JSON.stringify(examinationCompletionStatus));
+  }, [examinationCompletionStatus]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.EXAMINATION_COMPLETION_EVENTS, JSON.stringify(examinationCompletionEvents));
+  }, [examinationCompletionEvents]);
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.TOPIC_SCHEDULE_CHANGE_REQUESTS, JSON.stringify(topicScheduleChangeRequests));
+  }, [topicScheduleChangeRequests]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.ASSESSMENTS, JSON.stringify(syllabusAssessments));
@@ -1641,6 +1738,16 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
     return [
       ...generateReminders(schedules, activityHistory, currentTime),
       ...getAdminExaminationNotifications(publishedExaminations),
+      ...examinationCompletionEvents.map((event) => ({
+        id: event.eventId,
+        title: 'Examination Component Completed',
+        message: `${event.batchName} · ${event.moduleName} · ${event.component} marked complete. Mock event queued for Admin integration (${event.notificationStatus}).`,
+        timestamp: event.completedAt,
+        category: 'examination' as const,
+        isResolved: false,
+        moduleId: event.moduleId,
+        actionLabel: 'Review Examination'
+      })),
       ...examinationMarks.flatMap((record) => {
         const examination = publishedExaminations.find((item) => item.id === record.examinationId);
         if (record.status !== 'Submitted' || !record.submittedAt || !examination) return [];
@@ -1688,6 +1795,174 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
       isResolved: resolvedNotifIds.includes(notif.id)
     }));
   }, [allGeneratedNotifications, resolvedNotifIds]);
+
+  const recordExaminationComponentCompletion: TrainerContextType['recordExaminationComponentCompletion'] = (exam, component) => {
+    const completionState = examinationCompletionStatus[exam.id]?.[component];
+    if (completionState?.completed) return false;
+
+    const completedAt = new Date().toISOString();
+    const eventId = `exam-completion-${exam.id}-${component.toLowerCase().replace(/\s+/g, '-')}-${Date.now()}`;
+    const event: ExaminationCompletionEvent = {
+      eventId,
+      eventType: 'EXAM_COMPONENT_COMPLETED',
+      batchId: exam.batchId,
+      batchName: exam.batchName,
+      moduleId: exam.moduleId,
+      moduleName: exam.moduleName,
+      scheduleId: exam.id,
+      component,
+      trainerId: trainer.trainerId,
+      trainerName: trainer.name,
+      completedAt,
+      notificationStatus: 'PENDING_INTEGRATION'
+    };
+
+    setExaminationCompletionStatus((previous) => ({
+      ...previous,
+      [exam.id]: {
+        ...(previous[exam.id] || {}),
+        [component]: {
+          completed: true,
+          completedAt,
+          trainerId: trainer.trainerId,
+          trainerName: trainer.name,
+          eventId
+        }
+      }
+    }));
+    setExaminationCompletionEvents((previous) => [event, ...previous]);
+    addToast({
+      type: 'success',
+      title: 'Examination Completed',
+      message: `${component} was marked complete for ${exam.batchName} (${exam.moduleName}).`
+    });
+    return true;
+  };
+
+  const submitTopicScheduleChangeRequest: TrainerContextType['submitTopicScheduleChangeRequest'] = ({
+    scheduleId,
+    topicId,
+    postponeFrom,
+    postponeUntil,
+    reason
+  }) => {
+    const lockKey = `${scheduleId}:${topicId}`;
+    if (topicScheduleChangeLocks.current.has(lockKey)) return false;
+    topicScheduleChangeLocks.current.add(lockKey);
+    try {
+      const schedule = schedules.find((item) => item.id === scheduleId);
+      const targetModule = schedule && modules.find((item) => item.id === schedule.moduleId);
+      const topic = targetModule?.topics.find((item) => item.id === topicId);
+      if (!schedule || !targetModule || !topic || !isScheduleAssignedToTrainer(schedule, trainer)) {
+        addToast({
+          type: 'error',
+          title: 'Unable to Request Schedule Change',
+          message: 'The selected topic is not part of a batch assigned to your trainer account.'
+        });
+        return false;
+      }
+
+      const currentCompletedTopicIds = activityHistory
+        .filter((event) =>
+          event.batchId === getScheduleBatchId(schedule) &&
+          event.moduleId === schedule.moduleId &&
+          event.eventType === 'Topic Completed' &&
+          event.savedStatus === 'Saved' &&
+          event.topicId
+        )
+        .flatMap((event) => event.topicId ? [event.topicId] : []);
+      const completedTopicIds = [...new Set([
+        ...(schedule.completedTopicIds || []),
+        ...currentCompletedTopicIds
+      ])];
+      if (completedTopicIds.includes(topicId)) {
+        addToast({
+          type: 'error',
+          title: 'Topic Already Completed',
+          message: 'A completed topic’s schedule cannot be postponed.'
+        });
+        return false;
+      }
+
+      const currentDates = getTopicScheduledDates(schedule, targetModule.topics, completedTopicIds);
+      const originalScheduledDate = currentDates[topicId];
+      if (
+        !originalScheduledDate ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(postponeFrom) ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(postponeUntil) ||
+        postponeFrom > originalScheduledDate ||
+        postponeUntil < originalScheduledDate ||
+        postponeUntil <= originalScheduledDate ||
+        !reason.trim()
+      ) {
+        addToast({
+          type: 'error',
+          title: 'Invalid Schedule Change Request',
+          message: 'Choose a valid postponement period that includes the original scheduled date and enter a reason.'
+        });
+        return false;
+      }
+
+      const rescheduledDate = getNextClassDate(schedule, postponeUntil, false);
+      const revisedDates = rescheduledDate && getRescheduledTopicDates({
+        schedule,
+        topics: targetModule.topics,
+        completedTopicIds,
+        topicId,
+        rescheduledDate
+      });
+      if (!rescheduledDate || !revisedDates) {
+        addToast({
+          type: 'error',
+          title: 'Unable to Reschedule Topic',
+          message: 'The requested postponement could not be matched to the batch’s class days.'
+        });
+        return false;
+      }
+
+      const requestedAt = new Date().toISOString();
+      const request: TopicScheduleChangeRequest = {
+        id: `topic-change-${schedule.id}-${topic.id}-${Date.now()}`,
+        scheduleId: schedule.id,
+        batchId: getScheduleBatchId(schedule),
+        batchName: schedule.batch,
+        moduleId: targetModule.id,
+        moduleName: targetModule.name,
+        topicId,
+        topicName: topic.title,
+        originalScheduledDate,
+        postponeFrom,
+        postponeUntil,
+        rescheduledDate,
+        reason: reason.trim(),
+        requestedAt,
+        status: 'Approved',
+        decidedAt: requestedAt,
+        decisionReason: 'Automatically approved in the Trainer frontend preview; no Admin service is connected.'
+      };
+
+      const topicScheduleAdjustments = { ...(schedule.topicScheduleAdjustments || {}) };
+      completedTopicIds.forEach((completedTopicId) => {
+        const completedDate = currentDates[completedTopicId];
+        if (completedDate) topicScheduleAdjustments[completedTopicId] = completedDate;
+      });
+      topicScheduleAdjustments[topicId] = rescheduledDate;
+      setSchedules((previous) => previous.map((item) =>
+        item.id === schedule.id
+          ? { ...item, topicScheduleAdjustments }
+          : item
+      ));
+      setTopicScheduleChangeRequests((previous) => [request, ...previous]);
+      addToast({
+        type: 'success',
+        title: 'Schedule Change Approved',
+        message: `${topic.title} is now scheduled for ${formatReadableDate(rescheduledDate)}. This is a mock Trainer frontend approval.`
+      });
+      return true;
+    } finally {
+      topicScheduleChangeLocks.current.delete(lockKey);
+    }
+  };
 
   const resolveNotification = (notificationId: string) => {
     setResolvedNotifIds((prev) => (prev.includes(notificationId) ? prev : [...prev, notificationId]));
@@ -1876,6 +2151,9 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
     localStorage.removeItem(STORAGE_KEYS.EXAMINATIONS);
     localStorage.removeItem('academia_trainer_examination_requests_v1');
     localStorage.removeItem(STORAGE_KEYS.EXAMINATION_MARKS);
+    localStorage.removeItem(STORAGE_KEYS.EXAMINATION_COMPLETION_STATUS);
+    localStorage.removeItem(STORAGE_KEYS.EXAMINATION_COMPLETION_EVENTS);
+    localStorage.removeItem(STORAGE_KEYS.TOPIC_SCHEDULE_CHANGE_REQUESTS);
     localStorage.removeItem(STORAGE_KEYS.ASSESSMENTS);
     localStorage.removeItem(STORAGE_KEYS.NOTES_RELEASES);
 
@@ -1895,6 +2173,9 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
     setResolvedNotifIds([]);
     setExaminations(getInitialAdminExaminations(initialSchedules));
     setExaminationMarks([]);
+    setExaminationCompletionStatus({});
+    setExaminationCompletionEvents([]);
+    setTopicScheduleChangeRequests([]);
     submittedExaminationIds.current.clear();
 
     addToast({
@@ -1921,6 +2202,9 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
         notifications,
         examinations: publishedExaminations,
         examinationMarks,
+        examinationCompletionStatus,
+        examinationCompletionEvents,
+        topicScheduleChangeRequests,
         syllabusAssessments,
         topicNotes,
         topicNotesReleases,
@@ -1947,6 +2231,8 @@ export const TrainerProvider: React.FC<{ children: ReactNode }> = ({ children })
         resolveNotification,
         saveExaminationMarks,
         submitExaminationMarks,
+        recordExaminationComponentCompletion,
+        submitTopicScheduleChangeRequest,
         resetAllMockData
       }}
     >

@@ -31,6 +31,7 @@ import {
   getScheduleBatchId
 } from '../utils/dateTimeUtils';
 import { getScheduleCompletionStatus } from '../utils/scheduleCompletion';
+import { getBatchEndDate } from '../utils/batchEndDate';
 import { StudentListModal } from '../components/modals/StudentListModal';
 import { StudentProfileModal } from '../components/modals/StudentProfileModal';
 import { ScheduleDetailsModal } from '../components/modals/ScheduleDetailsModal';
@@ -139,27 +140,31 @@ export const MyClassSchedule: React.FC = () => {
     .filter((item) => !completionStatusBySchedule.get(item.id)?.isModuleCompleted)
     .slice()
     .sort((a, b) => parseTimeToMinutes(a.startTime) - parseTimeToMinutes(b.startTime));
-  const renderTimelineBatch = (item: ScheduleItem) => (
-    <div key={item.id} className="relative">
-      <div className="absolute -left-[31px] top-1.5 w-3.5 h-3.5 rounded-full bg-indigo-600 border-2 border-white shadow-xs" />
-      <div className="p-4 rounded-xl bg-indigo-50/50 border border-indigo-100">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs font-bold text-indigo-800 font-mono-numbers">
-            {item.startTime} – {item.endTime}
-          </span>
-          <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-            {item.batch} · {item.approvalStatus}
-          </span>
+  const renderTimelineBatch = (item: ScheduleItem) => {
+    const topicCount = modules.find((moduleItem) => moduleItem.id === item.moduleId)?.topics.length ?? 0;
+    const endDate = getBatchEndDate(item, topicCount);
+    return (
+      <div key={item.id} className="relative">
+        <div className="absolute -left-[31px] top-1.5 w-3.5 h-3.5 rounded-full bg-indigo-600 border-2 border-white shadow-xs" />
+        <div className="p-4 rounded-xl bg-indigo-50/50 border border-indigo-100">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-xs font-bold text-indigo-800 font-mono-numbers">
+              {item.startTime} – {item.endTime}
+            </span>
+            <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+              {item.batch} · {item.approvalStatus}
+            </span>
+          </div>
+          <h4 className="text-sm font-bold text-slate-900 mt-1">
+            {item.moduleName} ({getBatchDaysDescription(item.batch, item.scheduledDays)})
+          </h4>
+          <p className="text-xs text-slate-600 mt-0.5">
+            Batch Start Date: {formatReadableDate(item.startDate)} · Batch End Date: {endDate ? formatReadableDate(endDate) : '—'} · Venue: {item.roomOrLink} · {item.students.length} Enrolled Students
+          </p>
         </div>
-        <h4 className="text-sm font-bold text-slate-900 mt-1">
-          {item.moduleName} ({getBatchDaysDescription(item.batch, item.scheduledDays)})
-        </h4>
-        <p className="text-xs text-slate-600 mt-0.5">
-          Batch Start Date: {formatReadableDate(item.startDate)} · Venue: {item.roomOrLink} · {item.students.length} Enrolled Students
-        </p>
       </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <div className="space-y-2">
@@ -297,7 +302,7 @@ export const MyClassSchedule: React.FC = () => {
                   <tr className="border-b border-slate-200 bg-slate-50/80 text-slate-500 uppercase tracking-wider font-semibold">
                     <th className="py-3 px-4">Subject / Module</th>
                     <th className="py-3 px-3">Students</th>
-                    <th className="py-3 px-3">Date</th>
+                    <th className="py-3 px-3">Batch Dates</th>
                     <th className="py-3 px-3">Batch</th>
                     <th className="py-3 px-3">Batch Timings</th>
                     <th className="py-3 px-3">Session</th>
@@ -309,6 +314,10 @@ export const MyClassSchedule: React.FC = () => {
                   {filteredBatches.map((item) => {
                     const todayStr = `${currentTime.getFullYear()}-${String(currentTime.getMonth() + 1).padStart(2, '0')}-${String(currentTime.getDate()).padStart(2, '0')}`;
                     const batchStartDate = item.startDate || item.scheduledDate;
+                    const batchEndDate = getBatchEndDate(
+                      item,
+                      modules.find((moduleItem) => moduleItem.id === item.moduleId)?.topics.length ?? 0
+                    );
                     const hasStarted = batchStartDate <= todayStr;
                     const isApproved = item.approvalStatus === 'Approved';
                     const completionStatus = completionStatusBySchedule.get(item.id);
@@ -359,9 +368,12 @@ export const MyClassSchedule: React.FC = () => {
                           </button>
                         </td>
 
-                        {/* 3. Date (Start Date of the Batch) */}
+                        {/* 3. Batch start and calculated end dates */}
                         <td className="py-3 px-3 font-mono-numbers text-slate-700 whitespace-nowrap font-medium">
-                          {formatReadableDate(batchStartDate)}
+                          <div>Start: {formatReadableDate(batchStartDate)}</div>
+                          <div className="mt-0.5 text-[11px] text-slate-500">
+                            End: {batchEndDate ? formatReadableDate(batchEndDate) : '—'}
+                          </div>
                         </td>
 
                         {/* 4. Batch (MWF / TTS / or Just Timings for all days) */}
@@ -623,6 +635,7 @@ export const MyClassSchedule: React.FC = () => {
         isOpen={Boolean(detailsSchedule)}
         onClose={() => setDetailsSchedule(null)}
         schedule={detailsSchedule}
+        topicCount={modules.find((item) => item.id === detailsSchedule?.moduleId)?.topics.length ?? 0}
         onApprove={(id) => approveSchedule(id)}
         onRequestChange={(item) => setChangeSchedule(item)}
         onViewRoster={(item) => setRosterSchedule(item)}
@@ -634,6 +647,7 @@ export const MyClassSchedule: React.FC = () => {
         isOpen={Boolean(changeSchedule)}
         onClose={() => setChangeSchedule(null)}
         schedule={changeSchedule}
+        topicCount={modules.find((item) => item.id === changeSchedule?.moduleId)?.topics.length ?? 0}
         onSubmit={(id, reason) => requestScheduleChange(id, reason)}
       />
     </div>

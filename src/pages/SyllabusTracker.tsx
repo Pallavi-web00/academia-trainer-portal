@@ -6,7 +6,6 @@ import {
   Clock,
   Calendar,
   AlertTriangle,
-  History,
   CheckSquare,
   Layers,
   Sparkles,
@@ -18,10 +17,7 @@ import {
   ChevronDown,
   ChevronUp,
   Users,
-  CalendarDays,
   CalendarCheck2,
-  CalendarX2,
-  ListChecks,
   ShieldCheck,
   ExternalLink,
   RotateCcw,
@@ -29,7 +25,9 @@ import {
   Send,
   Download,
   FileText,
-  Building2
+  Building2,
+  CalendarClock,
+  Info,
 } from 'lucide-react';
 import { useTrainer } from '../context/TrainerContext';
 import { calculateModuleProgress } from '../utils/syllabusProgress';
@@ -41,12 +39,10 @@ import {
   getScheduleBatchId,
   isBatchScheduledOnDate
 } from '../utils/dateTimeUtils';
-import { ClassNotConductedModal } from '../components/modals/ClassNotConductedModal';
 import { StudentListModal } from '../components/modals/StudentListModal';
 import { StatusBadge } from '../components/common/StatusBadge';
 import { EmptyState } from '../components/common/EmptyState';
-import { ScheduleItem } from '../types';
-import { getScheduledSessionId } from '../data/scheduleData';
+import { ScheduleItem, SyllabusTopic, TopicScheduleChangeRequest } from '../types';
 import { Modal } from '../components/common/Modal';
 import {
   areAllStudentsAssessmentQualified,
@@ -55,6 +51,8 @@ import {
   isModuleReadyForFinanceVerification
 } from '../utils/syllabusAssessment';
 import { getScheduleCompletionStatus } from '../utils/scheduleCompletion';
+import { getBatchEndDate } from '../utils/batchEndDate';
+import { getTopicScheduledDates } from '../utils/topicScheduling';
 
 export const SyllabusTracker: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -72,9 +70,10 @@ export const SyllabusTracker: React.FC = () => {
     sendSyllabusAssessment,
     simulateSyllabusAssessmentResponses,
     conductTopicAgain,
-    recordClassNotConducted,
     getTopicNotesAvailability,
-    downloadTopicNotes
+    downloadTopicNotes,
+    topicScheduleChangeRequests,
+    submitTopicScheduleChangeRequest
   } = useTrainer();
 
   const sessionParam = searchParams.get('session');
@@ -100,17 +99,21 @@ export const SyllabusTracker: React.FC = () => {
     return null;
   });
 
-  // Collapsible sections state within the expanded batch view
-  // "keep the planned syllabus checklist and syllabus activity history collapsible, when clicked should expand"
+  // Collapsible checklist state within the expanded batch view
   const [isChecklistExpanded, setIsChecklistExpanded] = useState<boolean>(true);
-  const [isHistoryExpanded, setIsHistoryExpanded] = useState<boolean>(true);
 
   // Form & Interaction state for the active batch
   const [expandedScoreTopicId, setExpandedScoreTopicId] = useState<string | null>(null);
   const [expandedAssessmentId, setExpandedAssessmentId] = useState<string | null>(null);
-  const [isMissedModalOpen, setIsMissedModalOpen] = useState(false);
   const [isFinanceSubmissionModalOpen, setIsFinanceSubmissionModalOpen] = useState(false);
   const [rosterBatch, setRosterBatch] = useState<ScheduleItem | null>(null);
+  const [changeRequestTopic, setChangeRequestTopic] = useState<SyllabusTopic | null>(null);
+  const [detailsTopic, setDetailsTopic] = useState<SyllabusTopic | null>(null);
+  const [requestDetails, setRequestDetails] = useState<TopicScheduleChangeRequest | null>(null);
+  const [postponeFrom, setPostponeFrom] = useState('');
+  const [postponeUntil, setPostponeUntil] = useState('');
+  const [postponeReason, setPostponeReason] = useState('');
+  const [requestFormError, setRequestFormError] = useState('');
   const [activeDateContext, setActiveDateContext] = useState<string>(dateParam || getCurrentDateISO());
   const [topicSearch, setTopicSearch] = useState<string>('');
   const [filterMode, setFilterMode] = useState<'ALL' | 'PENDING' | 'COMPLETED'>('ALL');
@@ -182,6 +185,13 @@ export const SyllabusTracker: React.FC = () => {
     return getBatchCompletedTopicIds(currentBatch);
   }, [currentBatch, module.topics]);
 
+  const activeTopicScheduledDates = useMemo(
+    () => currentBatch
+      ? getTopicScheduledDates(currentBatch, module.topics, activeBatchCompletedTopicIds)
+      : {},
+    [currentBatch, module.topics, activeBatchCompletedTopicIds]
+  );
+
   const completionEventByTopic = useMemo(() => {
     const events = activityHistory
       .filter((event) =>
@@ -240,6 +250,50 @@ export const SyllabusTracker: React.FC = () => {
     if (submitted) setIsFinanceSubmissionModalOpen(false);
   };
 
+  const openTopicChangeRequest = (topic: SyllabusTopic, scheduledDate: string) => {
+    const dateAfterScheduled = new Date(`${scheduledDate}T00:00:00`);
+    dateAfterScheduled.setDate(dateAfterScheduled.getDate() + 1);
+    setChangeRequestTopic(topic);
+    setPostponeFrom(scheduledDate);
+    setPostponeUntil(`${dateAfterScheduled.getFullYear()}-${String(dateAfterScheduled.getMonth() + 1).padStart(2, '0')}-${String(dateAfterScheduled.getDate()).padStart(2, '0')}`);
+    setPostponeReason('');
+    setRequestFormError('');
+  };
+
+  const submitTopicChangeRequest = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!currentBatch || !changeRequestTopic) return;
+    const scheduledDate = activeTopicScheduledDates[changeRequestTopic.id];
+    if (
+      !postponeReason.trim() ||
+      !postponeFrom ||
+      !postponeUntil ||
+      !scheduledDate ||
+      postponeFrom > scheduledDate ||
+      postponeUntil <= scheduledDate
+    ) {
+      setRequestFormError('Choose a date range that includes the scheduled date, ends after it, and enter a reason.');
+      return;
+    }
+
+    const submitted = submitTopicScheduleChangeRequest({
+      scheduleId: currentBatch.id,
+      topicId: changeRequestTopic.id,
+      postponeFrom,
+      postponeUntil,
+      reason: postponeReason
+    });
+    if (submitted) setChangeRequestTopic(null);
+  };
+
+  const getLatestTopicChangeRequest = (topicId: string) => topicScheduleChangeRequests
+    .filter((request) =>
+      request.scheduleId === currentBatch?.id &&
+      request.moduleId === module.id &&
+      request.topicId === topicId
+    )
+    .sort((a, b) => Date.parse(b.requestedAt) - Date.parse(a.requestedAt))[0];
+
   // Filtered topics for search / tab
   const filteredTopics = useMemo(() => {
     return module.topics.filter((t) => {
@@ -274,63 +328,6 @@ export const SyllabusTracker: React.FC = () => {
   };
 
   // Each batch history includes its events across every assigned module.
-  const filteredHistory = useMemo(() => {
-    if (!currentBatch) return [];
-    return activityHistory
-      .filter((event) => event.batchId === getScheduleBatchId(currentBatch))
-      .sort(
-        (a, b) =>
-          Date.parse(b.displayDate) - Date.parse(a.displayDate) ||
-          Date.parse(b.timestamp) - Date.parse(a.timestamp)
-      );
-  }, [activityHistory, currentBatch]);
-
-  const historySummary = useMemo(() => {
-    if (!currentBatch) {
-      return {
-        classesConducted: 0,
-        classesNotConducted: 0,
-        topicsCompleted: 0,
-        updatesPending: 0
-      };
-    }
-
-    const batchSessions = syllabusSessions.filter(
-      (session) => session.batchId === getScheduleBatchId(currentBatch)
-    );
-    const savedEvents = filteredHistory.filter((event) => event.savedStatus === 'Saved');
-
-    const conductedSessions = new Set(
-      savedEvents
-        .filter((event) => event.eventType === 'Topic Completed' && event.sessionId)
-        .map((event) => `${event.moduleId}:${event.sessionId}`)
-    );
-    const missedSessions = new Set(
-      savedEvents
-        .filter((event) => event.eventType === 'Class Not Conducted' && event.sessionId)
-        .map((event) => `${event.moduleId}:${event.sessionId}`)
-    );
-    const completedTopics = new Set(
-      savedEvents
-        .filter((event) => event.eventType === 'Topic Completed')
-        .map((event) =>
-          `${event.moduleId}:${event.topicId || event.topicNumber || event.topicName || event.id}`
-        )
-    );
-
-    const today = getCurrentDateISO();
-    const updatesPending = batchSessions.filter(
-      (session) => session.scheduledDate < today && !session.outcome
-    ).length;
-
-    return {
-      classesConducted: conductedSessions.size,
-      classesNotConducted: missedSessions.size,
-      topicsCompleted: completedTopics.size,
-      updatesPending
-    };
-  }, [currentBatch, filteredHistory, syllabusSessions]);
-
   // If NO approved batches exist in the system yet:
   if (approvedBatches.length === 0) {
     return (
@@ -404,40 +401,23 @@ export const SyllabusTracker: React.FC = () => {
               <h2 className="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
                 {module.name}
               </h2>
-              <p className="text-xs sm:text-sm text-slate-500 mt-1 max-w-2xl leading-relaxed">
-                Click on any approved batch card below to expand its planned syllabus checklist and syllabus activity history.
-              </p>
+          
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
               <span className="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 text-xs font-semibold border border-emerald-200 flex items-center gap-1.5">
                 <ShieldCheck className="w-4 h-4 text-emerald-600" />
-                <span>{approvedBatches.length} Approved Active Batches</span>
+                <span>{approvedBatches.length} Active Batches</span>
               </span>
             </div>
           </div>
 
-          <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-4 text-xs text-slate-600">
-            <span>Faculty: <strong>Prof. Priyanka</strong></span>
-            <span>·</span>
-            <span>Curriculum: <strong>40 Planned Sessions</strong></span>
-            <span>·</span>
-            <span>Working Hours: <strong>09:00 AM – 06:00 PM</strong></span>
-            <span>·</span>
-            <span>Lunch Hour: <strong>01:00 PM – 02:00 PM</strong></span>
-          </div>
+          
         </div>
 
         {/* Batch Cards Grid */}
         <div>
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-sm font-bold text-slate-900 tracking-tight">
-              Assigned Batches for this Module
-            </h3>
-            <span className="text-xs text-slate-500">
-              Select a batch card to open & record syllabus progress
-            </span>
-          </div>
+          
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
             {/* Approved Batch Cards */}
@@ -455,6 +435,10 @@ export const SyllabusTracker: React.FC = () => {
                   : batchItem.batch;
 
               const batchSubTitle = getBatchDaysDescription(batchItem.batch, batchItem.scheduledDays);
+              const batchEndDate = getBatchEndDate(
+                batchItem,
+                batchItem.moduleId === module.id ? module.topics.length : 0
+              );
               const todayStatus = getTodaysSyllabusStatus(batchItem, schedules, activityHistory, currentTime);
               const completionStatus = getScheduleCompletionStatus({
                 schedule: batchItem,
@@ -480,9 +464,7 @@ export const SyllabusTracker: React.FC = () => {
                           <span className="text-lg font-bold text-slate-900 group-hover:text-indigo-600 transition-colors">
                             {batchTitle}
                           </span>
-                          <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-                            Approved
-                          </span>
+                          
                         </div>
                         <span className="text-xs text-slate-500 font-medium block mt-0.5">
                           {batchSubTitle}
@@ -531,6 +513,16 @@ export const SyllabusTracker: React.FC = () => {
                         </span>
                         <span className="font-semibold text-slate-800">
                           {formatReadableDate(batchItem.startDate || batchItem.scheduledDate)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <span className="text-slate-500 flex items-center gap-1.5">
+                          <CalendarCheck2 className="w-3.5 h-3.5 text-indigo-600" />
+                          <span>End Date:</span>
+                        </span>
+                        <span className="font-semibold text-slate-800">
+                          {batchEndDate ? formatReadableDate(batchEndDate) : '—'}
                         </span>
                       </div>
 
@@ -586,7 +578,7 @@ export const SyllabusTracker: React.FC = () => {
                   {/* Card Bottom CTA */}
                   <div className="mt-5 pt-3.5 border-t border-slate-100 flex items-center justify-between text-xs">
                     <span className="text-indigo-600 font-semibold group-hover:text-indigo-700 flex items-center gap-1">
-                      <span>Expand Checklist & History</span>
+                      <span>Expand Checklist</span>
                       <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
                     </span>
                     <span className="text-[11px] text-slate-400 font-mono-numbers">
@@ -598,7 +590,12 @@ export const SyllabusTracker: React.FC = () => {
             })}
 
             {/* Unapproved Batches (Pending Approval) */}
-            {unapprovedBatches.map((unapprovedItem) => (
+            {unapprovedBatches.map((unapprovedItem) => {
+              const unapprovedEndDate = getBatchEndDate(
+                unapprovedItem,
+                unapprovedItem.moduleId === module.id ? module.topics.length : 0
+              );
+              return (
               <div
                 key={unapprovedItem.id}
                 className="relative bg-slate-50/70 rounded-2xl border border-dashed border-amber-300 p-5 flex flex-col justify-between"
@@ -617,6 +614,12 @@ export const SyllabusTracker: React.FC = () => {
                       </div>
                       <span className="text-xs text-slate-500 block mt-0.5">
                         {unapprovedItem.startTime} – {unapprovedItem.endTime}
+                      </span>
+                      <span className="text-[11px] text-slate-500 block mt-1">
+                        Start Date: {formatReadableDate(unapprovedItem.startDate || unapprovedItem.scheduledDate)}
+                      </span>
+                      <span className="text-[11px] text-slate-500 block mt-0.5">
+                        End Date: {unapprovedEndDate ? formatReadableDate(unapprovedEndDate) : '—'}
                       </span>
                     </div>
 
@@ -639,7 +642,8 @@ export const SyllabusTracker: React.FC = () => {
                   </button>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -664,6 +668,10 @@ export const SyllabusTracker: React.FC = () => {
   const batchPercentage = Math.round((completedForThisBatch / totalTopics) * 100);
   const isCurrentBatchCompleted = currentBatchCompletionStatus?.isModuleCompleted === true;
   const currentBatchExamination = currentBatchCompletionStatus?.examination;
+  const currentBatchEndDate = getBatchEndDate(
+    currentBatch,
+    currentBatch.moduleId === module.id ? module.topics.length : 0
+  );
 
   const batchDisplayName = `${currentBatch.batch} (${currentBatch.startTime} – ${currentBatch.endTime})`;
   return (
@@ -681,7 +689,7 @@ export const SyllabusTracker: React.FC = () => {
 
         {/* Breadcrumb / Status info */}
         <div className="flex items-center gap-2 text-xs text-slate-500 font-mono-numbers">
-          <span className="text-slate-400">Syllabus Tracker</span>
+          <span className="text-slate-400">My Class Schedule</span>
           <span>/</span>
           <span className="font-semibold text-slate-800">{currentBatch.batch}</span>
           <span>/</span>
@@ -693,32 +701,22 @@ export const SyllabusTracker: React.FC = () => {
       <div className="p-5 sm:p-6 rounded-2xl bg-white border border-slate-200 shadow-2xs space-y-4">
         {/* Top Control Bar */}
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-semibold text-indigo-700 bg-indigo-50 px-2.5 py-1 rounded-md border border-indigo-200">
               Module: {module.code} · Advanced Curriculum
             </span>
-            <span className="text-xs text-slate-400">·</span>
-            <span className="text-xs text-slate-500 font-medium">
-              Start Date: {formatReadableDate(currentBatch.startDate || currentBatch.scheduledDate)}
-            </span>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 font-medium">
+              <span>Start Date: {formatReadableDate(currentBatch.startDate || currentBatch.scheduledDate)}</span>
+              <span>End Date: {currentBatchEndDate ? formatReadableDate(currentBatchEndDate) : '—'}</span>
+            </div>
           </div>
 
-          {/* Date & Class Not Conducted button */}
+          {/* Current session context */}
           <div className="flex items-center gap-2 sm:gap-3">
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-xs font-mono-numbers text-slate-700">
               <Calendar className="w-3.5 h-3.5 text-indigo-600" />
               <span>Session Date: {formatReadableDate(activeDateContext)}</span>
             </div>
-
-            {!isCurrentBatchCompleted && (
-              <button
-                onClick={() => setIsMissedModalOpen(true)}
-                className="px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg transition-colors flex items-center gap-1.5 cursor-pointer"
-              >
-                <AlertTriangle className="w-3.5 h-3.5 text-rose-600" />
-                <span>Class Not Conducted</span>
-              </button>
-            )}
           </div>
         </div>
 
@@ -821,7 +819,6 @@ export const SyllabusTracker: React.FC = () => {
           SECTION 1: PLANNED SYLLABUS CHECKLIST (COLLAPSIBLE)
          ========================================================================= */}
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden transition-all">
-        {/* Collapsible Header */}
         <div
           onClick={() => setIsChecklistExpanded((prev) => !prev)}
           className="p-4 sm:p-5 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between gap-3 cursor-pointer select-none hover:bg-slate-100/70 transition-colors"
@@ -862,7 +859,6 @@ export const SyllabusTracker: React.FC = () => {
           </div>
         </div>
 
-        {/* Collapsible Content */}
         <div
           className={`accordion-collapse ${isChecklistExpanded ? 'is-open' : 'is-closed'}`}
           aria-hidden={!isChecklistExpanded}
@@ -923,6 +919,8 @@ export const SyllabusTracker: React.FC = () => {
                 const isSavedCompleted = activeBatchCompletedTopicIds.includes(topic.id);
                 const completionEvent = completionEventByTopic.get(topic.id);
                 const topicCompletedDate = completionEvent?.displayDate || topic.completedDate;
+                const topicScheduledDate = activeTopicScheduledDates[topic.id];
+                const latestTopicRequest = getLatestTopicChangeRequest(topic.id);
                 const notesAvailability = getTopicNotesAvailability(
                   getScheduleBatchId(currentBatch),
                   module.id,
@@ -1024,18 +1022,54 @@ export const SyllabusTracker: React.FC = () => {
                           <span className="text-xs font-mono-numbers text-slate-400 font-medium mr-2">
                             {String(topic.number).padStart(2, '0')}.
                           </span>
+                          {topicScheduledDate && (
+                            <span className="ml-2 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700">
+                              <CalendarClock className="h-3 w-3" />
+                              {formatReadableDate(topicScheduledDate)}
+                            </span>
+                          )}
                           <span className={`text-xs font-medium ${isSavedCompleted ? 'text-slate-700' : 'text-slate-900 font-semibold'}`}>
                             {topic.title}
                           </span>
                           {isSavedCompleted && topicCompletedDate && (
                             <span className="ml-2 text-[11px] font-semibold text-emerald-700">
-                              Completed {formatReadableDate(topicCompletedDate)}
+                              {formatReadableDate(topicCompletedDate)}
                             </span>
                           )}
+                          
                         </div>
                       </div>
 
                       <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                        <button
+                          type="button"
+                          onClick={() => setDetailsTopic(topic)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-slate-50"
+                          title={`View ${topic.title} history`}
+                        >
+                          <CalendarClock className="h-3 w-3" />
+                          History
+                        </button>
+                        {!isSavedCompleted && !isCurrentBatchCompleted && (
+                          <button
+                            type="button"
+                            onClick={() => topicScheduledDate && openTopicChangeRequest(topic, topicScheduledDate)}
+                            disabled={!topicScheduledDate}
+                            className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2 py-1.5 text-[10px] font-semibold text-rose-800 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Request Change
+                          </button>
+                        )}
+                        {latestTopicRequest && (
+                          <button
+                            type="button"
+                            onClick={() => setRequestDetails(latestTopicRequest)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[10px] font-semibold text-emerald-800 hover:bg-emerald-100"
+                          >
+                            <Info className="h-3 w-3" />
+                            Request: {latestTopicRequest.status}
+                          </button>
+                        )}
                         <span className={`rounded-md border px-2 py-1 text-[10px] font-semibold ${topicStatusClass}`}>
                           {topicStatus}
                         </span>
@@ -1257,11 +1291,9 @@ export const SyllabusTracker: React.FC = () => {
           </div>
       </div>
 
-      {/* =========================================================================
-          SECTION 2: SYLLABUS ACTIVITY HISTORY (COLLAPSIBLE)
-         ========================================================================= */}
+      {/* Batch history is now opened from each topic row. */}
+      {/*
       <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden transition-all">
-        {/* Collapsible Header */}
         <div
           onClick={() => setIsHistoryExpanded((prev) => !prev)}
           className="p-4 sm:p-5 bg-slate-50/80 border-b border-slate-200 flex items-center justify-between gap-3 cursor-pointer select-none hover:bg-slate-100/70 transition-colors"
@@ -1302,7 +1334,6 @@ export const SyllabusTracker: React.FC = () => {
           </div>
         </div>
 
-        {/* Collapsible Content */}
         <div
           className={`accordion-collapse ${isHistoryExpanded ? 'is-open' : 'is-closed'}`}
           aria-hidden={!isHistoryExpanded}
@@ -1359,7 +1390,6 @@ export const SyllabusTracker: React.FC = () => {
               ))}
             </div>
 
-            {/* Current Batch Label */}
             <div className="p-3 bg-white border-b border-slate-100 flex items-center justify-between text-xs">
               <span className="px-2.5 py-1 rounded-md bg-indigo-50 text-indigo-700 font-bold border border-indigo-200">
                 {currentBatch.batch} Batch
@@ -1476,32 +1506,173 @@ export const SyllabusTracker: React.FC = () => {
           </div>
           </div>
       </div>
+      */}
 
-      {/* Missed Class Modal */}
-      <ClassNotConductedModal
-        isOpen={isMissedModalOpen && !isCurrentBatchCompleted}
-        onClose={() => setIsMissedModalOpen(false)}
-        moduleId={module.id}
-        moduleName={module.name}
-        selectedDate={activeDateContext}
-        moduleSchedulesOnDate={approvedBatches.filter(
-          (schedule) =>
-            activeDateContext >= schedule.startDate &&
-            isBatchScheduledOnDate(schedule.batch, activeDateContext, schedule.scheduledDays)
-        ).map((schedule) => {
-          const record = syllabusSessions.find(
-            (session) => session.id === getScheduledSessionId(schedule.id, activeDateContext)
-          );
-          return record
-            ? {
-                ...schedule,
-                sessionNumber: record.sessionNumber,
-                syllabusUpdateStatus: record.syllabusUpdateStatus
-              }
-            : schedule;
-        })}
-        onSubmit={(payload) => recordClassNotConducted(payload)}
-      />
+      <Modal
+        isOpen={Boolean(changeRequestTopic)}
+        onClose={() => setChangeRequestTopic(null)}
+        ariaLabel="Request a topic schedule change"
+      >
+        {changeRequestTopic && (
+          <form onSubmit={submitTopicChangeRequest}>
+            <div className="border-b border-rose-200 bg-rose-50/70 p-5">
+              <h2 className="text-sm font-bold text-slate-900">Request Schedule Change</h2>
+              <p className="mt-1 text-xs text-slate-600">
+                {currentBatch?.batch} · Topic {String(changeRequestTopic.number).padStart(2, '0')}: {changeRequestTopic.title}
+              </p>
+              <p className="mt-1 text-[10px] font-mono-numbers text-slate-500">Topic ID: {changeRequestTopic.id}</p>
+              <p className="mt-2 text-xs font-semibold text-amber-800">
+                Currently scheduled: {formatReadableDate(activeTopicScheduledDates[changeRequestTopic.id] || '')}
+              </p>
+            </div>
+            <div className="space-y-3 p-5">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="text-xs font-semibold text-slate-700">
+                  Postpone from
+                  <input
+                    type="date"
+                    required
+                    max={activeTopicScheduledDates[changeRequestTopic.id]}
+                    value={postponeFrom}
+                    onChange={(event) => setPostponeFrom(event.target.value)}
+                    className="mt-1 block w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  />
+                </label>
+                <label className="text-xs font-semibold text-slate-700">
+                  Postpone until
+                  <input
+                    type="date"
+                    required
+                    min={activeTopicScheduledDates[changeRequestTopic.id]}
+                    value={postponeUntil}
+                    onChange={(event) => setPostponeUntil(event.target.value)}
+                    className="mt-1 block w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  />
+                </label>
+              </div>
+              <label className="block text-xs font-semibold text-slate-700">
+                Reason
+                <textarea
+                  required
+                  rows={3}
+                  value={postponeReason}
+                  onChange={(event) => setPostponeReason(event.target.value)}
+                  className="mt-1 block w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm font-normal"
+                  placeholder="Explain why this topic needs to be postponed"
+                />
+              </label>
+              {requestFormError && <p role="alert" className="text-xs font-medium text-rose-700">{requestFormError}</p>}
+              <p className="text-[11px] text-slate-500">
+                This demo records the request as mock-approved and updates this topic and subsequent incomplete topic dates.
+              </p>
+            </div>
+            <div className="flex flex-col-reverse gap-2 border-t border-slate-100 p-5 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setChangeRequestTopic(null)}
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="rounded-lg bg-rose-900 px-4 py-2 text-xs font-bold text-white hover:bg-rose-800"
+              >
+                Submit Request
+              </button>
+            </div>
+          </form>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(detailsTopic)}
+        onClose={() => setDetailsTopic(null)}
+        ariaLabel="Topic activity history"
+      >
+        {detailsTopic && (
+          <div>
+            <div className="border-b border-slate-200 bg-slate-50 p-5">
+              <h2 className="text-sm font-bold text-slate-900">Topic History</h2>
+              <p className="mt-1 text-xs text-slate-600">
+                {currentBatch?.batch} · {module.name} · Topic {String(detailsTopic.number).padStart(2, '0')}: {detailsTopic.title}
+              </p>
+            </div>
+            <div className="max-h-[60vh] space-y-2 overflow-y-auto p-5">
+              {activityHistory
+                .filter((event) =>
+                  event.batchId === (currentBatch ? getScheduleBatchId(currentBatch) : '') &&
+                  event.moduleId === module.id &&
+                  event.topicId === detailsTopic.id
+                )
+                .sort((a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp))
+                .map((event) => (
+                  <div key={event.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-slate-800">{event.eventType}</span>
+                      <span className="text-[11px] font-mono-numbers text-slate-500">
+                        {formatReadableDate(event.displayDate)} · {new Date(event.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    {(event.details || event.reason) && (
+                      <p className="mt-1.5 text-xs text-slate-600">{event.details || event.reason}</p>
+                    )}
+                  </div>
+                ))}
+              {activityHistory.filter((event) =>
+                event.batchId === (currentBatch ? getScheduleBatchId(currentBatch) : '') &&
+                event.moduleId === module.id &&
+                event.topicId === detailsTopic.id
+              ).length === 0 && (
+                <p className="py-8 text-center text-xs text-slate-500">No activity has been recorded for this topic.</p>
+              )}
+            </div>
+            <div className="flex justify-end border-t border-slate-100 p-4">
+              <button
+                type="button"
+                onClick={() => setDetailsTopic(null)}
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        isOpen={Boolean(requestDetails)}
+        onClose={() => setRequestDetails(null)}
+        ariaLabel="Topic schedule request details"
+      >
+        {requestDetails && (
+          <div>
+            <div className="border-b border-emerald-200 bg-emerald-50/70 p-5">
+              <h2 className="text-sm font-bold text-slate-900">Schedule Request · {requestDetails.status}</h2>
+              <p className="mt-1 text-xs text-slate-600">
+                {requestDetails.batchName} · {requestDetails.moduleName} · {requestDetails.topicName} · {requestDetails.topicId}
+              </p>
+            </div>
+            <dl className="grid grid-cols-2 gap-3 p-5 text-xs">
+              <div><dt className="text-slate-500">Original scheduled date</dt><dd className="mt-1 font-semibold text-slate-800">{formatReadableDate(requestDetails.originalScheduledDate)}</dd></div>
+              <div><dt className="text-slate-500">Postpone from</dt><dd className="mt-1 font-semibold text-slate-800">{formatReadableDate(requestDetails.postponeFrom)}</dd></div>
+              <div><dt className="text-slate-500">Postpone until</dt><dd className="mt-1 font-semibold text-slate-800">{formatReadableDate(requestDetails.postponeUntil)}</dd></div>
+              <div><dt className="text-slate-500">Rescheduled date</dt><dd className="mt-1 font-semibold text-emerald-700">{formatReadableDate(requestDetails.rescheduledDate)}</dd></div>
+              <div className="col-span-2"><dt className="text-slate-500">Reason</dt><dd className="mt-1 text-slate-800">{requestDetails.reason}</dd></div>
+              <div className="col-span-2"><dt className="text-slate-500">Submitted</dt><dd className="mt-1 text-slate-800">{new Date(requestDetails.requestedAt).toLocaleString()}</dd></div>
+            </dl>
+            <div className="flex justify-end border-t border-slate-100 p-4">
+              <button
+                type="button"
+                onClick={() => setRequestDetails(null)}
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* Student Roster Modal */}
       <StudentListModal

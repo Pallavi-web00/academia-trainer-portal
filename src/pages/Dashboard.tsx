@@ -34,6 +34,7 @@ import { StudentListModal } from '../components/modals/StudentListModal';
 import { ScheduleDetailsModal } from '../components/modals/ScheduleDetailsModal';
 import { ChangeRequestModal } from '../components/modals/ChangeRequestModal';
 import { getScheduleCompletionStatus } from '../utils/scheduleCompletion';
+import { getBatchEndDate } from '../utils/batchEndDate';
 
 const AnimatedMetric: React.FC<{ value: number }> = ({ value }) => {
   const [displayedValue, setDisplayedValue] = useState(0);
@@ -479,6 +480,8 @@ export const Dashboard: React.FC = () => {
                       examinationMarks
                     });
                     const exam = status.examination;
+                    const topicCount = modules.find((item) => item.id === schedule.moduleId)?.topics.length ?? 0;
+                    const endDate = getBatchEndDate(schedule, topicCount);
                     return (
                       <div
                         key={`${schedule.id}-${schedule.moduleId}`}
@@ -487,6 +490,9 @@ export const Dashboard: React.FC = () => {
                         <div>
                           <p className="text-xs font-semibold text-slate-900">{schedule.batch} · {schedule.moduleName}</p>
                           <p className="text-[10px] text-slate-500">{schedule.students.length} students</p>
+                          <p className="text-[10px] text-slate-500">
+                            Batch End Date: {endDate ? formatReadableDate(endDate) : '—'}
+                          </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
@@ -728,6 +734,7 @@ export const Dashboard: React.FC = () => {
         isOpen={Boolean(detailsSchedule)}
         onClose={() => setDetailsSchedule(null)}
         schedule={detailsSchedule}
+        topicCount={modules.find((item) => item.id === detailsSchedule?.moduleId)?.topics.length ?? 0}
         onApprove={(id) => approveSchedule(id)}
         onRequestChange={(item) => setChangeSchedule(item)}
         onViewRoster={(item) => setSelectedStudentSchedule(item)}
@@ -739,6 +746,7 @@ export const Dashboard: React.FC = () => {
         isOpen={Boolean(changeSchedule)}
         onClose={() => setChangeSchedule(null)}
         schedule={changeSchedule}
+        topicCount={modules.find((item) => item.id === changeSchedule?.moduleId)?.topics.length ?? 0}
         onSubmit={(id, reason) => requestScheduleChange(id, reason)}
       />
     </div>

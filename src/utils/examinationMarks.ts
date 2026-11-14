@@ -6,7 +6,13 @@ import {
 } from '../types';
 import { parseTimeToMinutes } from './dateTimeUtils';
 
-const COMPONENTS: ExaminationComponentType[] = ['Theory', 'Practical', 'Project'];
+const COMPONENTS: ExaminationComponentType[] = [
+  'Theory',
+  'Practical',
+  'Technical Viva',
+  'Industrial Viva',
+  'Project'
+];
 
 export function getExaminationComponents(examination: AdminExamination) {
   return COMPONENTS.flatMap((type) => {
@@ -85,6 +91,14 @@ export function sanitizePersistedExaminationMarks(
   });
 }
 
+const marksKeyByType: Record<ExaminationComponentType, keyof ExaminationStudentMarks> = {
+  Theory: 'theory',
+  Practical: 'practical',
+  'Technical Viva': 'technicalViva',
+  'Industrial Viva': 'industrialViva',
+  Project: 'project'
+};
+
 export function getMarksValidationError(
   examination: AdminExamination,
   studentMarks: ExaminationStudentMarks[],
@@ -102,10 +116,11 @@ export function getMarksValidationError(
   ) return 'Marks must be recorded once for every Admin-approved eligible student.';
 
   for (const component of getExaminationComponents(examination)) {
-    const key = component.type.toLowerCase() as 'theory' | 'practical' | 'project';
+    const key = marksKeyByType[component.type as ExaminationComponentType];
     for (const student of examination.eligibleStudents) {
-      const value = entries.get(student.studentId)?.[key];
-      if (value === null || value === undefined) {
+      const rawValue = entries.get(student.studentId)?.[key];
+      const value = typeof rawValue === 'number' ? rawValue : null;
+      if (value === null) {
         if (requireComplete) return `Enter ${component.type} marks for every eligible student before submitting.`;
         continue;
       }
@@ -125,6 +140,8 @@ export function createEmptyStudentMarks(studentIds: string[]): ExaminationStuden
     studentId,
     theory: null,
     practical: null,
+    technicalViva: null,
+    industrialViva: null,
     project: null
   }));
 }

@@ -11,11 +11,12 @@ import {
 import { useTrainer } from '../context/TrainerContext';
 import {
   AdminExamination,
+  ExaminationCompletionComponent,
   ExaminationComponentType,
   ExaminationMarksRecord,
   ExaminationStudentMarks
 } from '../types';
-import { getScheduleBatchId, isScheduleAssignedToTrainer } from '../utils/dateTimeUtils';
+import { getScheduleBatchId, hasSessionEnded, isScheduleAssignedToTrainer } from '../utils/dateTimeUtils';
 import {
   createEmptyStudentMarks,
   getEarliestExaminationDate,
@@ -52,15 +53,40 @@ const formatDateTime = (value?: string) => {
 const emptyDraft = (examination: AdminExamination): ExaminationStudentMarks[] =>
   createEmptyStudentMarks(examination.eligibleStudents.map((student) => student.studentId));
 
+const isComponentAvailable = (
+  component: { scheduledDate: string; endTime?: string } | undefined,
+  now: Date
+) => {
+  if (!component?.endTime) return false;
+  return hasSessionEnded(component.scheduledDate, component.endTime, now);
+};
+
+const getComponentConfirmationMessage = (component: ExaminationCompletionComponent) => {
+  switch (component) {
+    case 'Theory':
+      return 'Have you completed the Theory examination for this batch and module?';
+    case 'Practical':
+      return 'Have you completed the Practical examination for this batch and module?';
+    case 'Viva':
+      return 'Have you completed BOTH the Technical Viva and Industrial Viva examinations for this batch and module?';
+    case 'Project':
+      return 'Have you completed the Project examination for this batch and module?';
+    default:
+      return 'Have you completed this examination for this batch and module?';
+  }
+};
+
 export const Examinations: React.FC = () => {
   const {
     trainer,
     examinations,
     examinationMarks,
+    examinationCompletionStatus,
     schedules,
     currentTime,
     saveExaminationMarks,
-    submitExaminationMarks
+    submitExaminationMarks,
+    recordExaminationComponentCompletion
   } = useTrainer();
   const [searchParams] = useSearchParams();
   const [expandedEligibleExamId, setExpandedEligibleExamId] = useState<string | null>(null);
@@ -105,9 +131,24 @@ export const Examinations: React.FC = () => {
   ) => {
     if (rawValue !== '' && !/^\d*\.?\d*$/.test(rawValue)) return;
 
-    const key = component.toLowerCase() as 'theory' | 'practical' | 'project';
+    const componentLimits: Record<ExaminationComponentType, number> = {
+      Theory: 100,
+      Practical: 100,
+      'Technical Viva': 10,
+      'Industrial Viva': 10,
+      Project: 100
+    };
+    const componentKeys: Record<ExaminationComponentType, keyof typeof draft[number]> = {
+      Theory: 'theory',
+      Practical: 'practical',
+      'Technical Viva': 'technicalViva',
+      'Industrial Viva': 'industrialViva',
+      Project: 'project'
+    };
+
+    const key = componentKeys[component];
     const value = rawValue === '' ? null : Number(rawValue);
-    if (value !== null && (!Number.isFinite(value) || value < 0 || value > 100)) return;
+    if (value !== null && (!Number.isFinite(value) || value < 0 || value > componentLimits[component])) return;
 
     setDraft((current) => current.map((student) =>
       student.studentId === studentId
@@ -161,6 +202,11 @@ export const Examinations: React.FC = () => {
     }
   ];
 
+  const handleComponentCompletion = (exam: AdminExamination, component: ExaminationCompletionComponent) => {
+    if (!window.confirm(getComponentConfirmationMessage(component))) return;
+    recordExaminationComponentCompletion(exam, component);
+  };
+
   return (
     <div className="space-y-4">
       <header className="rounded-xl border border-rose-100 bg-gradient-to-r from-rose-50 to-white p-4 sm:p-5">
@@ -208,6 +254,28 @@ export const Examinations: React.FC = () => {
             const entryOpen = isExaminationMarksEntryOpen(exam, currentTime);
             const earliest = getEarliestExaminationDate(exam);
             const components = getExaminationComponents(exam);
+            const vivaComponents = components.filter((component) =>
+              component.type === 'Technical Viva' || component.type === 'Industrial Viva'
+            );
+            const cardComponents = [
+              ...components.filter((component) => component.type === 'Theory' || component.type === 'Practical'),
+              ...(vivaComponents.length > 0 ? [{
+                type: 'Viva' as const,
+                scheduledDate: vivaComponents[0].scheduledDate,
+                scheduledTime: vivaComponents[0].scheduledTime,
+                endTime: vivaComponents[vivaComponents.length - 1].endTime,
+                maxMarks: vivaComponents.reduce((total, component) => total + (component.maxMarks ?? 0), 0),
+                details: 'Technical Viva and Industrial Viva'
+              }] : []),
+              ...components.filter((component) => component.type === 'Project')
+            ];
+            const batchStudents = schedules.find((schedule) =>
+              getScheduleBatchId(schedule) === exam.batchId &&
+              schedule.moduleId === exam.moduleId
+            )?.students ?? [];
+            const batchStudentIds = new Set(batchStudents.map((student) => student.id));
+            const eligibleStudentIds = new Set(exam.eligibleStudents.map((student) => student.studentId));
+            const finalEligibilityClosed = Boolean(earliest && currentTime.getTime() >= earliest.getTime());
 
             return (
               <article
@@ -296,19 +364,65 @@ export const Examinations: React.FC = () => {
                   </div>
                 </div>
 
-                <div className="mt-4 grid gap-2 sm:grid-cols-3">
-                  {components.map((component) => (
-                    <div key={component.type} className="rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2">
-                      <p className="text-xs font-bold text-slate-800">{component.type}</p>
-                      <p className="mt-1 text-xs text-slate-600">
-                        {formatDate(component.scheduledDate)} · {component.scheduledTime}
-                        {component.endTime ? ` – ${component.endTime}` : ''}
-                      </p>
-                      {component.maxMarks !== undefined && (
-                        <p className="mt-0.5 text-[11px] text-slate-500">Maximum: {component.maxMarks}</p>
-                      )}
-                    </div>
-                  ))}
+                <div className="mt-4 grid gap-2 sm:grid-cols-4">
+                  {cardComponents.map((component) => {
+                    const isViva = component.type === 'Viva';
+                    const vivaText = isViva ? 'Viva' : component.type;
+                    const techViva = vivaComponents.find((item) => item.type === 'Technical Viva');
+                    const industrialViva = vivaComponents.find((item) => item.type === 'Industrial Viva');
+                    const componentKey: ExaminationCompletionComponent = isViva ? 'Viva' : component.type as ExaminationCompletionComponent;
+                    const completion = examinationCompletionStatus[exam.id]?.[componentKey];
+                    const isCompleted = Boolean(completion?.completed);
+                    const isAvailable = isViva
+                      ? vivaComponents.length > 0 && vivaComponents.every((item) => isComponentAvailable(item, currentTime))
+                      : isComponentAvailable(component, currentTime);
+
+                    return (
+                      <div key={component.type} className="rounded-lg border border-slate-100 bg-slate-50/70 px-3 py-2">
+                        <p className="text-xs font-bold text-slate-800">{vivaText}</p>
+                        {isViva ? (
+                          <div className="mt-1 space-y-1 text-[11px] text-slate-600">
+                            {techViva && (
+                              <p>Technical Viva: {formatDate(techViva.scheduledDate)} · {techViva.scheduledTime}{techViva.endTime ? ` – ${techViva.endTime}` : ''}</p>
+                            )}
+                            {industrialViva && (
+                              <p>Industrial Viva: {formatDate(industrialViva.scheduledDate)} · {industrialViva.scheduledTime}{industrialViva.endTime ? ` – ${industrialViva.endTime}` : ''}</p>
+                            )}
+                            <p className="text-[11px] text-slate-500">Combined Max: {component.maxMarks}</p>
+                          </div>
+                        ) : (
+                          <>
+                            <p className="mt-1 text-xs text-slate-600">
+                              {formatDate(component.scheduledDate)} · {component.scheduledTime}
+                              {component.endTime ? ` – ${component.endTime}` : ''}
+                            </p>
+                            {component.maxMarks !== undefined && (
+                              <p className="mt-0.5 text-[11px] text-slate-500">Maximum: {component.maxMarks}</p>
+                            )}
+                          </>
+                        )}
+                        {isCompleted ? (
+                          <div className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">
+                            <CheckCircle2 className="h-3.5 w-3.5" /> Completed
+                          </div>
+                        ) : (
+                          <div className="mt-2">
+                            <button
+                              type="button"
+                              onClick={() => handleComponentCompletion(exam, componentKey)}
+                              disabled={!isAvailable}
+                              className="inline-flex w-full items-center justify-center rounded-md border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[10px] font-semibold text-rose-900 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+                            >
+                              Exam Completed
+                            </button>
+                            {!isAvailable && (
+                              <p className="mt-1 text-[10px] text-slate-500">Available after examination ends</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
                   <span className="inline-flex items-center gap-1">
@@ -324,22 +438,35 @@ export const Examinations: React.FC = () => {
 
                 {expandedEligibleExamId === exam.id && (
                   <div className="mt-4 overflow-x-auto rounded-lg border border-slate-200">
+                    <div className="flex items-center justify-between bg-rose-50 px-3 py-2 text-[10px] uppercase tracking-wide text-rose-900">
+                      <span>All students</span>
+                      <span>{finalEligibilityClosed ? 'Eligibility Closed' : 'Eligibility Open'}</span>
+                    </div>
                     <table className="w-full min-w-[400px] text-left text-xs">
                       <thead className="bg-rose-50 text-[10px] uppercase tracking-wide text-rose-900">
                         <tr>
                           <th className="px-3 py-2">Student</th>
                           <th className="px-3 py-2">Student ID</th>
+                          <th className="px-3 py-2">Status</th>
                           <th className="px-3 py-2">Batch</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
-                        {exam.eligibleStudents.map((student) => (
-                          <tr key={student.studentId} className="text-slate-700">
-                            <td className="px-3 py-2 font-medium">{student.studentName}</td>
-                            <td className="px-3 py-2 font-mono">{student.studentId}</td>
-                            <td className="px-3 py-2">{student.batchName}</td>
-                          </tr>
-                        ))}
+                        {batchStudents.map((student) => {
+                          const isEligible = eligibleStudentIds.has(student.id);
+                          return (
+                            <tr key={student.id} className={isEligible ? 'text-slate-700' : 'text-slate-400'}>
+                              <td className="px-3 py-2 font-medium">{student.name}</td>
+                              <td className="px-3 py-2 font-mono">{student.id}</td>
+                              <td className="px-3 py-2">
+                                <span className={`inline-flex rounded-full px-2 py-0.5 font-semibold ${isEligible ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                                  {isEligible ? 'Eligible' : 'Not Eligible'}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2">{exam.batchName}</td>
+                            </tr>
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -359,45 +486,83 @@ export const Examinations: React.FC = () => {
                     <h3 className="text-sm font-bold text-slate-900">Enter examination marks</h3>
                     <p className="mt-1 text-xs text-slate-500">Enter values for the scheduled components. Partial drafts can be saved; final submission requires every value.</p>
                     <div className="mt-3 overflow-x-auto rounded-lg border border-slate-200">
-                      <table className="w-full min-w-[760px] text-left text-xs">
+                      <table className="w-full min-w-[900px] text-left text-xs">
                         <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
                           <tr>
                             <th className="px-3 py-2">Student</th>
-                            {components.map((component) => (
-                              <th key={component.type} className="px-3 py-2">
-                                {component.type}{component.maxMarks !== undefined ? ` (/${component.maxMarks})` : ''}
-                              </th>
-                            ))}
-                            <th className="px-3 py-2">Total (/300)</th>
+                            <th className="px-3 py-2">Theory (100)</th>
+                            <th className="px-3 py-2">Practical (100)</th>
+                            <th className="px-3 py-2" colSpan={2}>Viva (20)</th>
+                            <th className="px-3 py-2">Project (100)</th>
+                            <th className="px-3 py-2">Total (/320)</th>
+                          </tr>
+                          <tr className="bg-slate-100 text-[10px] uppercase tracking-wide text-slate-500">
+                            <th className="px-3 py-2" aria-hidden="true"></th>
+                            <th className="px-3 py-2" aria-hidden="true"></th>
+                            <th className="px-3 py-2" aria-hidden="true"></th>
+                            <th className="px-3 py-2">Technical Viva (10)</th>
+                            <th className="px-3 py-2">Industrial Viva (10)</th>
+                            <th className="px-3 py-2" aria-hidden="true"></th>
+                            <th className="px-3 py-2" aria-hidden="true"></th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                           {exam.eligibleStudents.map((student) => {
                             const marks = draft.find((item) => item.studentId === student.studentId);
-                            const total = getStudentTotalMarks(marks ?? { theory: null, practical: null, project: null });
+                            const total = getStudentTotalMarks(marks ?? { theory: null, practical: null, technicalViva: null, industrialViva: null, project: null });
                             return (
                               <tr key={student.studentId}>
                                 <td className="px-3 py-2 font-medium text-slate-800">
                                   {student.studentName}<span className="ml-1 font-mono text-[10px] text-slate-400">{student.studentId}</span>
                                 </td>
-                                {components.map((component) => {
-                                  const key = component.type.toLowerCase() as 'theory' | 'practical' | 'project';
+                                {(['Theory', 'Practical'] as ExaminationComponentType[]).map((component) => {
+                                  const key = ({ Theory: 'theory', Practical: 'practical' } as Record<ExaminationComponentType, 'theory' | 'practical'>)[component];
                                   const value = marks?.[key];
                                   return (
-                                    <td key={component.type} className="px-3 py-2">
+                                    <td key={component} className="px-3 py-2">
                                       <input
                                         type="number"
                                         min="0"
-                                        max={component.maxMarks}
+                                        max={100}
                                         step="any"
                                         value={value ?? ''}
-                                        onChange={(event) => setMark(student.studentId, component.type, event.target.value)}
-                                        aria-label={`${component.type} marks for ${student.studentName}`}
+                                        onChange={(event) => setMark(student.studentId, component, event.target.value)}
+                                        aria-label={`${component} marks for ${student.studentName}`}
                                         className="w-24 rounded-md border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100"
                                       />
                                     </td>
                                   );
                                 })}
+                                {(['Technical Viva', 'Industrial Viva'] as ExaminationComponentType[]).map((component) => {
+                                  const key = ({ 'Technical Viva': 'technicalViva', 'Industrial Viva': 'industrialViva' } as Record<ExaminationComponentType, 'technicalViva' | 'industrialViva'>)[component];
+                                  const value = marks?.[key];
+                                  return (
+                                    <td key={component} className="px-3 py-2">
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        max={10}
+                                        step="any"
+                                        value={value ?? ''}
+                                        onChange={(event) => setMark(student.studentId, component, event.target.value)}
+                                        aria-label={`${component} marks for ${student.studentName}`}
+                                        className="w-20 rounded-md border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100"
+                                      />
+                                    </td>
+                                  );
+                                })}
+                                <td className="px-3 py-2">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    max={100}
+                                    step="any"
+                                    value={marks?.project ?? ''}
+                                    onChange={(event) => setMark(student.studentId, 'Project', event.target.value)}
+                                    aria-label={`Project marks for ${student.studentName}`}
+                                    className="w-24 rounded-md border border-slate-200 px-2 py-1.5 text-xs outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-100"
+                                  />
+                                </td>
                                 <td className="px-3 py-2 text-center font-semibold text-slate-700">
                                   {total === null ? '—' : total}
                                 </td>
@@ -440,12 +605,16 @@ export const Examinations: React.FC = () => {
 
                 {submitted && viewing && record && (
                   <div className="mt-4 overflow-x-auto rounded-lg border border-emerald-200">
-                    <table className="w-full min-w-[760px] text-left text-xs">
+                    <table className="w-full min-w-[900px] text-left text-xs">
                       <thead className="bg-emerald-50 text-[10px] uppercase tracking-wide text-emerald-800">
                         <tr>
                           <th className="px-3 py-2">Student</th>
-                          {components.map((component) => <th key={component.type} className="px-3 py-2">{component.type}</th>)}
-                          <th className="px-3 py-2">Total</th>
+                          <th className="px-3 py-2">Theory</th>
+                          <th className="px-3 py-2">Practical</th>
+                          <th className="px-3 py-2">Technical Viva</th>
+                          <th className="px-3 py-2">Industrial Viva</th>
+                          <th className="px-3 py-2">Project</th>
+                          <th className="px-3 py-2">Total (/320)</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100">
@@ -455,10 +624,11 @@ export const Examinations: React.FC = () => {
                           return (
                             <tr key={marks.studentId}>
                               <td className="px-3 py-2 font-medium text-slate-800">{student?.studentName || marks.studentId}</td>
-                              {components.map((component) => {
-                                const key = component.type.toLowerCase() as 'theory' | 'practical' | 'project';
-                                return <td key={component.type} className="px-3 py-2 text-slate-700">{marks[key]}</td>;
-                              })}
+                              <td className="px-3 py-2 text-slate-700">{marks.theory}</td>
+                              <td className="px-3 py-2 text-slate-700">{marks.practical}</td>
+                              <td className="px-3 py-2 text-slate-700">{marks.technicalViva ?? '—'}</td>
+                              <td className="px-3 py-2 text-slate-700">{marks.industrialViva ?? '—'}</td>
+                              <td className="px-3 py-2 text-slate-700">{marks.project}</td>
                               <td className="px-3 py-2 text-center font-semibold text-slate-700">{total === null ? '—' : total}</td>
                             </tr>
                           );

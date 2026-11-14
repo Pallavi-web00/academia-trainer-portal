@@ -42,6 +42,8 @@ export function getInitialAdminExaminations(schedules: ScheduleItem[]): AdminExa
     batchId: string;
     theory?: AdminExamination['components']['Theory'];
     practical?: AdminExamination['components']['Practical'];
+    technicalViva?: AdminExamination['components']['Technical Viva'];
+    industrialViva?: AdminExamination['components']['Industrial Viva'];
     project?: AdminExamination['components']['Project'];
     eligibleStudentIds?: string[];
     adminDetails: string;
@@ -51,6 +53,8 @@ export function getInitialAdminExaminations(schedules: ScheduleItem[]): AdminExa
       batchId: 'batch-daily',
       theory: { scheduledDate: '2026-11-10', scheduledTime: '10:00 AM', endTime: '12:00 PM', maxMarks: 100 },
       practical: { scheduledDate: '2026-11-12', scheduledTime: '10:00 AM', endTime: '12:00 PM', maxMarks: 100 },
+      technicalViva: { scheduledDate: '2026-11-12', scheduledTime: '02:00 PM', endTime: '03:00 PM', maxMarks: 10 },
+      industrialViva: { scheduledDate: '2026-11-13', scheduledTime: '10:00 AM', endTime: '11:00 AM', maxMarks: 10 },
       project: { scheduledDate: '2026-11-15', scheduledTime: '02:00 PM', endTime: '04:00 PM', maxMarks: 100 },
       eligibleStudentIds: [
         'STU-2026-1021',
@@ -116,6 +120,8 @@ export function getInitialAdminExaminations(schedules: ScheduleItem[]): AdminExa
       components: {
         ...(fixture.theory ? { Theory: fixture.theory } : {}),
         ...(fixture.practical ? { Practical: fixture.practical } : {}),
+        ...(fixture.technicalViva ? { 'Technical Viva': fixture.technicalViva } : {}),
+        ...(fixture.industrialViva ? { 'Industrial Viva': fixture.industrialViva } : {}),
         ...(fixture.project ? { Project: fixture.project } : {})
       },
       eligibleStudents: createEligibleStudents(

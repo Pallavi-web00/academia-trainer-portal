@@ -88,21 +88,10 @@ export const NotesManagement: React.FC = () => {
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">Notes Management</p>
               <h1 className="mt-1 text-xl font-bold text-slate-900">{selectedModule.name}</h1>
-              <p className="mt-1 text-sm text-slate-600">
-                Prepare one document per topic for all assigned batches.
-              </p>
+              
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {selectedModuleSchedules.map((schedule) => (
-              <span
-                key={schedule.id}
-                className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-800"
-              >
-                {schedule.batch}
-              </span>
-            ))}
-          </div>
+          
         </div>
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xs">
@@ -111,9 +100,7 @@ export const NotesManagement: React.FC = () => {
               <BookOpen className="h-4 w-4 text-rose-700" />
               {selectedModule.topics.length} Topics
             </div>
-            <p className="text-xs text-slate-500">
-              Notes can be uploaded before teaching; batch access remains assessment-gated.
-            </p>
+            
           </div>
 
           {!topicNotesLoaded ? (
@@ -132,43 +119,38 @@ export const NotesManagement: React.FC = () => {
                 return (
                   <article
                     key={topic.id}
-                    className="flex flex-col gap-3 px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5"
+                    className="flex flex-col gap-3 px-2 py-2 sm:flex-row sm:items-center sm:justify-between sm:px-5"
                   >
                     <div className="flex min-w-0 items-start gap-3">
                       <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-rose-50 text-xs font-bold text-rose-800">
                         {String(topic.number).padStart(2, '0')}
                       </span>
-                      <div className="min-w-0">
-                        <h2 className="text-sm font-semibold text-slate-900">{topic.title}</h2>
-                        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
-                          <span className={`rounded-md border px-2 py-0.5 font-semibold ${statusClass}`}>{status}</span>
-                          {notes ? (
-                            <>
-                              <span className="inline-flex max-w-full items-center gap-1.5">
-                                <FileText className="h-3.5 w-3.5 shrink-0 text-rose-700" />
-                                <span className="max-w-56 truncate font-medium text-slate-700" title={notes.fileName}>
-                                  {notes.fileName}
-                                </span>
-                                <span>({formatFileSize(notes.fileSize)})</span>
-                              </span>
-                              <span className="inline-flex items-center gap-1">
+                      <div className="min-w-0 flex-1">
+                        {notes ? (
+                          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                            <h2 className="text-sm font-semibold text-slate-900">{topic.title}</h2>
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+                              <span className="inline-flex items-center gap-1 whitespace-nowrap">
                                 <Clock3 className="h-3.5 w-3.5" />
                                 Last updated {new Date(notes.lastUpdatedAt).toLocaleString()}
                               </span>
                               {notes.version > 1 && <span>Version {notes.version}</span>}
-                            </>
-                          ) : (
-                            <span>Upload notes before teaching to prepare this topic.</span>
-                          )}
-                        </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <h2 className="text-sm font-semibold text-slate-900">{topic.title}</h2>
+                            
+                          </>
+                        )}
                       </div>
                     </div>
                     <button
                       type="button"
                       onClick={() => setActiveTopic(topic)}
-                      className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white transition-colors hover:bg-indigo-700"
+                      className="inline-flex shrink-0 items-center justify-center gap-1 rounded-lg bg-indigo-600 px-3.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-indigo-700"
                     >
-                      {notes ? <FileText className="h-3.5 w-3.5" /> : <Upload className="h-3.5 w-3.5" />}
+                      {notes ? <FileText className="h-3.5 w-3.5" /> : <Upload className="h-3 w-3.5" />}
                       {notes ? 'Edit Notes' : 'Upload Notes'}
                     </button>
                   </article>
@@ -223,8 +205,8 @@ export const NotesManagement: React.FC = () => {
 
             return (
               <article key={item.id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-2xs">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-start gap-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-start gap-2">
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-800">
                       <FileText className="h-5 w-5" />
                     </span>
@@ -238,18 +220,9 @@ export const NotesManagement: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="mt-4">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Assigned Batches</p>
-                  <div className="mt-2 flex flex-wrap gap-1.5">
-                    {batches.map((schedule) => (
-                      <span key={schedule.id} className="rounded-full border border-rose-200 bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-800">
-                        {schedule.batch}
-                      </span>
-                    ))}
-                  </div>
-                </div>
+                
 
-                <div className="mt-4 grid grid-cols-3 gap-2">
+                <div className="mt-2 grid grid-cols-3 gap-1">
                   <div className="rounded-xl bg-slate-50 p-3">
                     <p className="text-lg font-bold text-slate-900">{item.topics.length}</p>
                     <p className="text-[11px] text-slate-500">Topics</p>
@@ -275,7 +248,7 @@ export const NotesManagement: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => navigate(`/notes/${item.id}`)}
-                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-indigo-700"
+                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-5 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-indigo-700"
                 >
                   Manage Topics
                   <ChevronRight className="h-4 w-4" />

@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Calendar, Clock, MapPin, Users, BookOpen, AlertCircle, ArrowUpRight } from 'lucide-react';
+import { X, Calendar, CalendarCheck2, Clock, MapPin, Users, BookOpen, AlertCircle, ArrowUpRight } from 'lucide-react';
 import { ScheduleItem, SyllabusActivityEvent } from '../../types';
 import { StatusBadge } from '../common/StatusBadge';
 import { Modal } from '../common/Modal';
@@ -9,11 +9,13 @@ import {
   getSessionSyllabusStatus,
   getScheduleBatchId
 } from '../../utils/dateTimeUtils';
+import { getBatchEndDate } from '../../utils/batchEndDate';
 
 interface ScheduleDetailsModalProps {
   isOpen: boolean;
   onClose: () => void;
   schedule: ScheduleItem | null;
+  topicCount: number;
   onApprove: (id: string) => void;
   onRequestChange: (schedule: ScheduleItem) => void;
   onViewRoster: (schedule: ScheduleItem) => void;
@@ -25,6 +27,7 @@ export const ScheduleDetailsModal: React.FC<ScheduleDetailsModalProps> = ({
   isOpen,
   onClose,
   schedule,
+  topicCount,
   onApprove,
   onRequestChange,
   onViewRoster,
@@ -35,6 +38,7 @@ export const ScheduleDetailsModal: React.FC<ScheduleDetailsModalProps> = ({
 
   const todayStr = getCurrentDateISO();
   const batchStartDate = schedule.startDate || schedule.scheduledDate;
+  const batchEndDate = getBatchEndDate(schedule, topicCount);
   const hasStarted = batchStartDate <= todayStr;
   const isApproved = schedule.approvalStatus === 'Approved';
   const isConducted = isApproved && hasStarted && (schedule.sessionNumber || 0) > 0;
@@ -81,6 +85,10 @@ export const ScheduleDetailsModal: React.FC<ScheduleDetailsModalProps> = ({
               </div>
               <p className="font-semibold text-slate-900 font-mono-numbers">
                 {formatReadableDate(schedule.startDate || schedule.scheduledDate)}
+              </p>
+              <p className="mt-1 flex items-center gap-1 text-[11px] font-medium text-slate-500">
+                <CalendarCheck2 className="h-3 w-3 text-indigo-600" />
+                End Date: {batchEndDate ? formatReadableDate(batchEndDate) : '—'}
               </p>
             </div>
 

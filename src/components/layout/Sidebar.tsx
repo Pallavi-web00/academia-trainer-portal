@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
-  CalendarDays,
   BookOpenCheck,
   FileText,
   Bell,
@@ -88,8 +87,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
 
   const navItems = [
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
-    { name: 'My Class Schedule', path: '/schedule', icon: CalendarDays },
-    { name: 'Syllabus Tracker', path: '/syllabus', icon: BookOpenCheck },
+    { name: 'My Class Schedule', path: '/syllabus', icon: BookOpenCheck },
     { name: 'Notes Management', path: '/notes', icon: FileText },
     { name: 'Attendance', path: '/attendance', icon: ClipboardClock },
     { name: 'Examination', path: '/examinations', icon: ClipboardCheck },

@@ -66,6 +66,8 @@ export interface ScheduleItem {
   moduleName: string;
   batch: string;
   startDate: string;     // Batch Start Date (YYYY-MM-DD)
+  historicalEndDate?: string; // Frozen calculated end date once the module is completed
+  topicScheduleAdjustments?: Record<string, string>;
   scheduledDate: string; // Current / Anchor date (YYYY-MM-DD)
   scheduledDays: number[]; // 0: Sunday through 6: Saturday
   startTime: string;     // e.g. "09:00 AM"
@@ -92,6 +94,26 @@ export interface ScheduledSyllabusSession {
   sessionNumber: number;
   outcome?: 'Conducted' | 'Not Conducted';
   syllabusUpdateStatus: SyllabusUpdateStatus;
+}
+
+export interface TopicScheduleChangeRequest {
+  id: string;
+  scheduleId: string;
+  batchId: string;
+  batchName: string;
+  moduleId: string;
+  moduleName: string;
+  topicId: string;
+  topicName: string;
+  originalScheduledDate: string;
+  postponeFrom: string;
+  postponeUntil: string;
+  rescheduledDate: string;
+  reason: string;
+  requestedAt: string;
+  status: 'Pending' | 'Approved' | 'Rejected';
+  decidedAt?: string;
+  decisionReason?: string;
 }
 
 export interface SyllabusActivityEvent {
@@ -202,7 +224,39 @@ export interface NotificationItem {
   targetRole?: 'Finance Department' | 'Admin';
 }
 
-export type ExaminationComponentType = 'Theory' | 'Practical' | 'Project';
+export type ExaminationComponentType =
+  | 'Theory'
+  | 'Practical'
+  | 'Technical Viva'
+  | 'Industrial Viva'
+  | 'Project';
+
+export type ExaminationCompletionComponent = 'Theory' | 'Practical' | 'Viva' | 'Project';
+
+export interface ExaminationCompletionStatusItem {
+  completed: boolean;
+  completedAt?: string;
+  trainerId?: string;
+  trainerName?: string;
+  eventId?: string;
+}
+
+export type ExaminationCompletionState = Partial<Record<ExaminationCompletionComponent, ExaminationCompletionStatusItem>>;
+
+export interface ExaminationCompletionEvent {
+  eventId: string;
+  eventType: 'EXAM_COMPONENT_COMPLETED';
+  batchId: string;
+  batchName: string;
+  moduleId: string;
+  moduleName: string;
+  scheduleId: string;
+  component: ExaminationCompletionComponent;
+  trainerId?: string;
+  trainerName?: string;
+  completedAt: string;
+  notificationStatus: 'PENDING_INTEGRATION';
+}
 
 export interface AdminExaminationComponent {
   scheduledDate: string;
@@ -249,6 +303,8 @@ export interface ExaminationStudentMarks {
   studentId: string;
   theory: number | null;
   practical: number | null;
+  technicalViva?: number | null;
+  industrialViva?: number | null;
   project: number | null;
 }
 
